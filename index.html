@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>Football Player Agency</title>
+    <style>
+        /* General reset for margin and padding */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        /* Body settings */
+        body {
+            background-color: #121212; /* Dark background */
+            color: #fff; /* White text color */
+            font-family: 'Arial', sans-serif;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            flex-direction: column;
+        }
+
+        /* Centered logo */
+        .logo {
+            max-width: 400px;
+            width: 100%;
+            height: auto;
+            margin-bottom: 50px;
+        }
+
+        /* Modern button styling */
+        .contact-btn {
+            padding: 15px 30px;
+            background-color: #eeeeee; /* Bright yellow */
+            color: #121212; /* Dark text for contrast */
+            text-transform: uppercase;
+            border: none;
+            border-radius: 30px;
+            font-size: 18px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+        }
+
+        /* Button hover effect */
+        .contact-btn:hover {
+            background-color: #121212; /* Lighter yellow on hover */
+            color: #eeeeee; /* Dark text for contrast */
+
+        }
+
+        /* Responsive design */
+        @media (max-width: 768px) {
+            .logo {
+                max-width: 300px;
+            }
+            .contact-btn {
+                padding: 12px 24px;
+                font-size: 16px;
+            }
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Centered logo -->
+    <img src="https://playersfirst.github.io/logo.png" alt="Football Player Agency Logo" class="logo">
+
+    <!-- Contact button -->
+    <button class="contact-btn">Contact Us</button>
+
+</body>
+</html>
