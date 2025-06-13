@@ -84,24 +84,29 @@ class MatrixTurboScraper:
         }
 
     def distribute_urls(self) -> List[str]:
-        """Distribute URLs among workers"""
-        urls_per_worker = len(self.all_search_urls) // self.total_workers
-        remainder = len(self.all_search_urls) % self.total_workers
-        
-        start_idx = self.worker_id * urls_per_worker
-        end_idx = start_idx + urls_per_worker
-        
-        # Handle remainder
-        if self.worker_id < remainder:
-            start_idx += self.worker_id
-            end_idx += self.worker_id + 1
+        """Distribute URLs among workers - OPTIMIZED for 15 workers = 15 URLs"""
+        if self.total_workers == 15 and len(self.all_search_urls) == 15:
+            # Perfect 1:1 ratio - each worker gets exactly 1 URL
+            logging.info(f"Worker {self.worker_id}: PERFECT DISTRIBUTION - Assigned URL index {self.worker_id}")
+            return [self.all_search_urls[self.worker_id]]
         else:
-            start_idx += remainder
-            end_idx += remainder
-        
-        my_urls = self.all_search_urls[start_idx:end_idx]
-        logging.info(f"Worker {self.worker_id}: Assigned {len(my_urls)} URLs (indices {start_idx}-{end_idx-1})")
-        return my_urls
+            # Fallback to original distribution logic
+            urls_per_worker = len(self.all_search_urls) // self.total_workers
+            remainder = len(self.all_search_urls) % self.total_workers
+            
+            start_idx = self.worker_id * urls_per_worker
+            end_idx = start_idx + urls_per_worker
+            
+            if self.worker_id < remainder:
+                start_idx += self.worker_id
+                end_idx += self.worker_id + 1
+            else:
+                start_idx += remainder
+                end_idx += remainder
+            
+            my_urls = self.all_search_urls[start_idx:end_idx]
+            logging.info(f"Worker {self.worker_id}: Assigned {len(my_urls)} URLs (indices {start_idx}-{end_idx-1})")
+            return my_urls
 
     def get_worker_headers(self):
         """Get worker-specific headers with random variations"""
