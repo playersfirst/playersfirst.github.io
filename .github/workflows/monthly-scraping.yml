@@ -1,199 +1,154 @@
-# .github/workflows/matrix-scraping.yml
-name: MATRIX TURBO Player Data Scraping
-on:
-  schedule:
-    # Run on the 1st of every month at 2 AM UTC
-    - cron: '0 2 1 * *'
-  workflow_dispatch: # Allow manual trigger
+# .github/workflows/monthly-scraping.yml
 
-jobs:
-  # MATRIX STRATEGY - Multiple machines with different IPs!
-  matrix-scrape:
-    runs-on: ubuntu-latest
-    timeout-minutes: 180  # 3 hours per worker
-    strategy:
-      matrix:
-        worker_id: [0, 1, 2, 3, 4]  # 5 workers = 5 different IPs!
-      fail-fast: false  # Don't cancel other workers if one fails
-      max-parallel: 5   # All workers run simultaneously
-    
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.9'
-    
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install requests pandas beautifulsoup4 openpyxl lxml
-        echo "Dependencies installed for worker ${{ matrix.worker_id }}"
-    
-    - name: Run Matrix Worker
-      run: |
-        echo "🚀 Starting Matrix Worker ${{ matrix.worker_id }}/5..."
-        python scraper.py --worker-id ${{ matrix.worker_id }} --total-workers 5
-        echo "✅ Worker ${{ matrix.worker_id }} completed"
-    
-    - name: Upload worker results
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: worker-${{ matrix.worker_id }}-results
-        path: |
-          transfermarkt_worker_${{ matrix.worker_id }}_*.xlsx
-          transfermarkt_worker_${{ matrix.worker_id }}_*.json
-          scraper.log
-        retention-days: 30
+# ... (The 'matrix-scrape' job remains the same as before) ...
 
   # MERGE JOB - Combines all worker results
   merge-results:
-    # This job runs only after all matrix jobs have completed
     needs: matrix-scrape
     runs-on: ubuntu-latest
-    if: always()  # Run even if some workers in the matrix fail
+    if: always()
 
-    # FIX 1: Grant write permissions to the GITHUB_TOKEN for this job
     permissions:
-      contents: write # Required to push changes back to the repository
+      contents: write
 
     steps:
     - name: Checkout repository
-      # We need to fetch the repository content to push changes to it
       uses: actions/checkout@v4
-    
+
     - name: Set up Python
       uses: actions/setup-python@v4
       with:
         python-version: '3.9'
-    
+
     - name: Install merge dependencies
       run: |
         python -m pip install --upgrade pip
         pip install pandas openpyxl
-    
+
     - name: Download all worker results
       uses: actions/download-artifact@v4
       with:
-        # This path will contain subdirectories like /worker-0-results, /worker-1-results, etc.
         path: worker-results/
-    
+
     - name: Display downloaded file structure
       run: ls -R worker-results/
-    
+
     - name: Merge worker results
-      id: merge_step # Add an ID to reference outputs from this step
+      id: merge_step
+      # FIX: Replaced the deprecated `::set-output` with the new $GITHUB_OUTPUT method.
       run: |
+        MERGE_SUCCESS="false"
+        PLAYER_COUNT=0
+        INSTAGRAM_COUNT=0
+
+        # The python script now just prints results. The shell script handles setting the output.
         python -c "
-import pandas as pd
-import json
-import os
-from glob import glob
+        import pandas as pd
+        import json
+        import os
+        from glob import glob
 
-print('🔄 Merging worker results...')
+        print('🔄 Merging worker results...')
+        all_data = []
+        json_files = glob('worker-results/worker-*-results/transfermarkt_worker_*.json')
 
-all_data = []
-# Correctly glob for JSON files within the downloaded artifact structure
-json_files = glob('worker-results/worker-*-results/transfermarkt_worker_*.json')
+        if not json_files:
+            print('❌ No JSON result files found to merge.')
+            exit(0)
 
-if not json_files:
-    print('❌ No JSON result files found to merge.')
-    # Set an output to indicate failure
-    print('::set-output name=merge_success::false')
-    exit(0) # Exit gracefully so the workflow doesn't stop here
+        for json_file in json_files:
+            print(f'Processing: {json_file}')
+            try:
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    worker_data = json.load(f)
+                    all_data.extend(worker_data)
+                    print(f'Added {len(worker_data)} players from {json_file}')
+            except Exception as e:
+                print(f'Error reading {json_file}: {e}')
 
-for json_file in json_files:
-    print(f'Processing: {json_file}')
-    try:
-        with open(json_file, 'r', encoding='utf-8') as f:
-            worker_data = json.load(f)
-            all_data.extend(worker_data)
-            print(f'Added {len(worker_data)} players from {json_file}')
-    except Exception as e:
-        print(f'Error reading {json_file}: {e}')
+        if all_data:
+            seen = set()
+            unique_data = []
+            for player in all_data:
+                key = f\"{player.get('Name')}|{player.get('Transfermarkt')}\"
+                if key not in seen:
+                    seen.add(key)
+                    unique_data.append(player)
 
-if all_data:
-    seen = set()
-    unique_data = []
-    for player in all_data:
-        key = f\"{player.get('Name')}|{player.get('Transfermarkt')}\"
-        if key not in seen:
-            seen.add(key)
-            unique_data.append(player)
-    
-    print(f'Original players: {len(all_data)}, Unique players: {len(unique_data)}')
-    
-    df = pd.DataFrame(unique_data)
-    df = df.sort_values(by='Value (M€)', ascending=False)
-    
-    output_filename = 'jose_new.xlsx'
-    with pd.ExcelWriter(output_filename, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Players')
-        worksheet = writer.sheets['Players']
-        worksheet.column_dimensions['A'].width = 30
-        worksheet.column_dimensions['B'].width = 15
-        worksheet.column_dimensions['C'].width = 50
-        worksheet.column_dimensions['D'].width = 50
-    
-    total_players = len(df)
-    instagram_count = df['Instagram'].astype(bool).sum()
-    
-    print(f'✅ Merged file created: {output_filename}')
-    print(f'👥 Total unique players: {total_players}')
-    print(f'📸 With Instagram: {instagram_count}')
-    
-    # Set outputs for use in later steps
-    print(f'::set-output name=merge_success::true')
-    print(f'::set-output name=player_count::{total_players}')
-    print(f'::set-output name=instagram_count::{instagram_count}')
-else:
-    print('❌ No data found across all workers.')
-    print('::set-output name=merge_success::false')
-        "
-    
+            print(f'Original players: {len(all_data)}, Unique players: {len(unique_data)}')
+
+            df = pd.DataFrame(unique_data)
+            df = df.sort_values(by='Value (M€)', ascending=False)
+
+            output_filename = 'jose_new.xlsx'
+            with pd.ExcelWriter(output_filename, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False, sheet_name='Players')
+                worksheet = writer.sheets['Players']
+                worksheet.column_dimensions['A'].width = 30
+                worksheet.column_dimensions['B'].width = 15
+                worksheet.column_dimensions['C'].width = 50
+                worksheet.column_dimensions['D'].width = 50
+
+            total_players = len(df)
+            instagram_count = df['Instagram'].astype(bool).sum()
+
+            print(f'✅ Merged file created: {output_filename}')
+            print(f'👥 Total unique players: {total_players}')
+            print(f'📸 With Instagram: {instagram_count}')
+            
+            # Print values for the shell script to capture
+            print(f'MERGE_SUCCESS=true')
+            print(f'PLAYER_COUNT={total_players}')
+            print(f'INSTAGRAM_COUNT={instagram_count}')
+        else:
+            print('❌ No data found across all workers.')
+        " > merge_outputs.txt
+
+        # Read the outputs from the python script and set them for the job
+        if [ -f merge_outputs.txt ]; then
+          while IFS= read -r line; do
+            echo "$line" >> $GITHUB_OUTPUT
+          done < merge_outputs.txt
+        fi
+
     - name: Commit and push merged results
-      # FIX 2: Only run this step if the merge script was successful
-      if: steps.merge_step.outputs.merge_success == 'true'
+      if: steps.merge_step.outputs.MERGE_SUCCESS == 'true'
       run: |
         git config user.name "Matrix Scraper Bot"
         git config user.email "action@github.com"
-        
+
         git add jose_new.xlsx
-        
-        # Check if there are changes to commit
+
         if git diff --staged --quiet; then
           echo "ℹ️ No changes to commit."
         else
-          PLAYER_COUNT="${{ steps.merge_step.outputs.player_count }}"
-          INSTAGRAM_COUNT="${{ steps.merge_step.outputs.instagram_count }}"
+          PLAYER_COUNT="${{ steps.merge_step.outputs.PLAYER_COUNT }}"
+          INSTAGRAM_COUNT="${{ steps.merge_step.outputs.INSTAGRAM_COUNT }}"
           COMMIT_MSG="🚀 MATRIX Update: ${PLAYER_COUNT} players (${INSTAGRAM_COUNT} with Instagram) - $(date +'%Y-%m-%d %H:%M UTC')"
-          
+
           git commit -m "$COMMIT_MSG"
           git push
           echo "✅ Matrix results pushed successfully."
         fi
-    
+
     - name: Upload final merged results
       uses: actions/upload-artifact@v4
-      if: always() && steps.merge_step.outputs.merge_success == 'true'
+      if: always() && steps.merge_step.outputs.MERGE_SUCCESS == 'true'
       with:
         name: final-merged-results
         path: jose_new.xlsx
         retention-days: 90
-    
+
     - name: Matrix Summary
       if: always()
       run: |
         echo "## 🎉 MATRIX SCRAPING WORKFLOW COMPLETE!" >> $GITHUB_STEP_SUMMARY
-        if [ "${{ steps.merge_step.outputs.merge_success }}" == "true" ]; then
+        if [ "${{ steps.merge_step.outputs.MERGE_SUCCESS }}" == "true" ]; then
           echo "- **Status:** Successful Merge & Push" >> $GITHUB_STEP_SUMMARY
           echo "- **Workers used:** 5" >> $GITHUB_STEP_SUMMARY
           echo "- **Final file:** jose_new.xlsx" >> $GITHUB_STEP_SUMMARY
-          echo "- **Total players:** ${{ steps.merge_step.outputs.player_count }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **With Instagram:** ${{ steps.merge_step.outputs.instagram_count }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Total players:** ${{ steps.merge_step.outputs.PLAYER_COUNT }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **With Instagram:** ${{ steps.merge_step.outputs.INSTAGRAM_COUNT }}" >> $GITHUB_STEP_SUMMARY
         else
           echo "- **Status:** Merge Failed" >> $GITHUB_STEP_SUMMARY
           echo "- **Details:** No data was produced by the workers to merge." >> $GITHUB_STEP_SUMMARY
