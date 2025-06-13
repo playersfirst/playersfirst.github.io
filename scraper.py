@@ -167,7 +167,7 @@ class MatrixTurboScraper:
                 return ''
             
             soup = BeautifulSoup(response.text, 'html.parser')
-            for a in soup.find_all('a', href=True, limit=30):
+            for a in soup.find_all('a', href=True):
                 href = a['href']
                 if 'instagram.com' in href:
                     return href
