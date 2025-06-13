@@ -14,7 +14,7 @@ jobs:
     strategy:
       matrix:
         worker_id: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]  # 15 workers!
-      fail-fast: false  # Don't cancel other workers if one fails
+      fail-fast: true  # Don't cancel other workers if one fails
       max-parallel: 15  # All 15 workers run simultaneously
     
     steps:
@@ -45,12 +45,11 @@ jobs:
         name: worker-${{ matrix.worker_id }}-results
         path: |
           transfermarkt_worker_${{ matrix.worker_id }}_*.xlsx
-          transfermarkt_worker_${{ matrix.worker_id }}_*.json
           scraper.log
         retention-days: 30
 
   
-  # MERGE JOB - Combines all 15 worker results
+  # MERGE JOB - Combines all 15 worker results from XLSX files
   merge-results:
     needs: matrix-scrape
     runs-on: ubuntu-latest
@@ -81,79 +80,133 @@ jobs:
     - name: Display downloaded file structure
       run: ls -R worker-results/
 
-    - name: Merge worker results
-      id: merge_step
+    - name: Create merge script
       run: |
-        MERGE_SUCCESS="false"
-        PLAYER_COUNT=0
-        INSTAGRAM_COUNT=0
-
-        python -c "
+        cat > merge_xlsx.py << 'EOF'
         import pandas as pd
-        import json
         import os
         from glob import glob
+        import sys
 
-        print('🔄 Merging 15 worker results...')
-        all_data = []
-        json_files = glob('worker-results/worker-*-results/transfermarkt_worker_*.json')
-
-        if not json_files:
-            print('❌ No JSON result files found to merge.')
-            exit(0)
-
-        for json_file in json_files:
-            print(f'Processing: {json_file}')
-            try:
-                with open(json_file, 'r', encoding='utf-8') as f:
-                    worker_data = json.load(f)
-                    all_data.extend(worker_data)
-                    print(f'Added {len(worker_data)} players from {json_file}')
-            except Exception as e:
-                print(f'Error reading {json_file}: {e}')
-
-        if all_data:
-            seen = set()
-            unique_data = []
-            for player in all_data:
-                key = f\"{player.get('Name')}|{player.get('Transfermarkt')}\"
-                if key not in seen:
-                    seen.add(key)
-                    unique_data.append(player)
-
-            print(f'Original players: {len(all_data)}, Unique players: {len(unique_data)}')
-
-            df = pd.DataFrame(unique_data)
-            df = df.sort_values(by='Value (M€)', ascending=False)
-
+        def merge_xlsx_files():
+            print('🔄 Merging 15 worker XLSX results...')
+            
+            # Find all XLSX files from workers
+            xlsx_files = glob('worker-results/worker-*-results/transfermarkt_worker_*.xlsx')
+            
+            if not xlsx_files:
+                print('❌ No XLSX result files found to merge.')
+                return False, 0, 0
+            
+            print(f'Found {len(xlsx_files)} XLSX files to merge')
+            
+            all_data = []
+            
+            for xlsx_file in xlsx_files:
+                print(f'Processing: {xlsx_file}')
+                try:
+                    df = pd.read_excel(xlsx_file)
+                    all_data.append(df)
+                    print(f'Added {len(df)} players from {xlsx_file}')
+                except Exception as e:
+                    print(f'Error reading {xlsx_file}: {e}')
+                    continue
+            
+            if not all_data:
+                print('❌ No valid data found in XLSX files.')
+                return False, 0, 0
+            
+            # Combine all dataframes
+            combined_df = pd.concat(all_data, ignore_index=True)
+            print(f'Combined total: {len(combined_df)} players')
+            
+            # Remove duplicates based on Transfermarkt URL (assuming it's a column)
+            # Check what columns are available
+            print(f'Available columns: {list(combined_df.columns)}')
+            
+            # Remove duplicates - adjust column name based on your actual data
+            if 'Transfermarkt' in combined_df.columns:
+                unique_df = combined_df.drop_duplicates(subset=['Transfermarkt'])
+                print(f'After removing duplicates by Transfermarkt URL: {len(unique_df)} players')
+            elif 'transfermarkt_url' in combined_df.columns:
+                unique_df = combined_df.drop_duplicates(subset=['transfermarkt_url'])
+                print(f'After removing duplicates by transfermarkt_url: {len(unique_df)} players')
+            else:
+                # Fallback: remove duplicates by name if Transfermarkt column not found
+                if 'Name' in combined_df.columns:
+                    unique_df = combined_df.drop_duplicates(subset=['Name'])
+                    print(f'After removing duplicates by Name: {len(unique_df)} players')
+                else:
+                    unique_df = combined_df
+                    print('No suitable column for deduplication found, keeping all records')
+            
+            # Sort by value if possible
+            if 'Value (M€)' in unique_df.columns:
+                unique_df = unique_df.sort_values(by='Value (M€)', ascending=False)
+            elif 'Value' in unique_df.columns:
+                unique_df = unique_df.sort_values(by='Value', ascending=False)
+            
+            # Save merged file
             output_filename = 'jose_new.xlsx'
             with pd.ExcelWriter(output_filename, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False, sheet_name='Players')
+                unique_df.to_excel(writer, index=False, sheet_name='Players')
                 worksheet = writer.sheets['Players']
-                worksheet.column_dimensions['A'].width = 30
-                worksheet.column_dimensions['B'].width = 15
-                worksheet.column_dimensions['C'].width = 50
-                worksheet.column_dimensions['D'].width = 50
-
-            total_players = len(df)
-            instagram_count = df['Instagram'].astype(bool).sum()
-
+                # Auto-adjust column widths
+                for col in worksheet.columns:
+                    max_length = 0
+                    column = col[0].column_letter
+                    for cell in col:
+                        try:
+                            if len(str(cell.value)) > max_length:
+                                max_length = len(str(cell.value))
+                        except:
+                            pass
+                    adjusted_width = min(max_length + 2, 50)
+                    worksheet.column_dimensions[column].width = adjusted_width
+            
+            total_players = len(unique_df)
+            
+            # Count Instagram links if column exists
+            instagram_count = 0
+            if 'Instagram' in unique_df.columns:
+                instagram_count = unique_df['Instagram'].notna().sum()
+            elif 'instagram' in unique_df.columns:
+                instagram_count = unique_df['instagram'].notna().sum()
+            
             print(f'✅ Merged file created: {output_filename}')
             print(f'👥 Total unique players: {total_players}')
             print(f'📸 With Instagram: {instagram_count}')
             print(f'🌐 Data collected from 15 different IPs')
             
-            print(f'MERGE_SUCCESS=true')
-            print(f'PLAYER_COUNT={total_players}')
-            print(f'INSTAGRAM_COUNT={instagram_count}')
-        else:
-            print('❌ No data found across all workers.')
-        " > merge_outputs.txt
+            return True, total_players, instagram_count
 
-        if [ -f merge_outputs.txt ]; then
+        if __name__ == "__main__":
+            success, player_count, instagram_count = merge_xlsx_files()
+            
+            # Write outputs for GitHub Actions
+            with open('merge_results.txt', 'w') as f:
+                f.write(f"MERGE_SUCCESS={str(success).lower()}\n")
+                f.write(f"PLAYER_COUNT={player_count}\n")
+                f.write(f"INSTAGRAM_COUNT={instagram_count}\n")
+            
+            if not success:
+                sys.exit(1)
+        EOF
+
+    - name: Run merge script
+      id: merge_step
+      run: |
+        python merge_xlsx.py
+        
+        # Read the results
+        if [ -f merge_results.txt ]; then
           while IFS= read -r line; do
             echo "$line" >> $GITHUB_OUTPUT
-          done < merge_outputs.txt
+          done < merge_results.txt
+        else
+          echo "MERGE_SUCCESS=false" >> $GITHUB_OUTPUT
+          echo "PLAYER_COUNT=0" >> $GITHUB_OUTPUT
+          echo "INSTAGRAM_COUNT=0" >> $GITHUB_OUTPUT
         fi
 
     - name: Commit and push merged results
@@ -189,13 +242,13 @@ jobs:
       run: |
         echo "## 🎉 15-IP MATRIX SCRAPING COMPLETE!" >> $GITHUB_STEP_SUMMARY
         if [ "${{ steps.merge_step.outputs.MERGE_SUCCESS }}" == "true" ]; then
-          echo "- **Status:** Successful 15-Worker Merge & Push" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status:** ✅ Successful 15-Worker Merge & Push" >> $GITHUB_STEP_SUMMARY
           echo "- **IPs used:** 15 different GitHub runner IPs" >> $GITHUB_STEP_SUMMARY
           echo "- **Efficiency:** 1 search URL per IP (perfect distribution)" >> $GITHUB_STEP_SUMMARY
           echo "- **Final file:** jose_new.xlsx" >> $GITHUB_STEP_SUMMARY
           echo "- **Total players:** ${{ steps.merge_step.outputs.PLAYER_COUNT }}" >> $GITHUB_STEP_SUMMARY
           echo "- **With Instagram:** ${{ steps.merge_step.outputs.INSTAGRAM_COUNT }}" >> $GITHUB_STEP_SUMMARY
         else
-          echo "- **Status:** Merge Failed" >> $GITHUB_STEP_SUMMARY
-          echo "- **Details:** No data was produced by the workers to merge." >> $GITHUB_STEP_SUMMARY
+          echo "- **Status:** ❌ Merge Failed" >> $GITHUB_STEP_SUMMARY
+          echo "- **Details:** Check logs for merge errors" >> $GITHUB_STEP_SUMMARY
         fi
