@@ -8,6 +8,10 @@ from typing import List, Dict, Optional, Set
 import sys
 import os
 from bs4 import BeautifulSoup
+import asyncio
+import aiohttp
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 
 # Configure logging for GitHub Actions
 logging.basicConfig(
@@ -19,11 +23,12 @@ logging.basicConfig(
     ]
 )
 
-class TransfermarktScraper:
+class TurboTransfermarktScraper:
     def __init__(self):
         self.players_data = []
         self.session = requests.Session()
-        self.seen_players: Set[str] = set()  # Track seen players to avoid duplicates
+        self.seen_players: Set[str] = set()
+        self.data_lock = threading.Lock()  # Thread safety
         
         # Set up output filename
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
@@ -48,70 +53,80 @@ class TransfermarktScraper:
             "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/55782279", # U24 players 2.2-2.1M
         ]
         
-        # More realistic User-Agent
-        self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        # AGGRESSIVE headers with multiple user agents
+        self.user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/120.0.0.0'
+        ]
+        
+        self.base_headers = {
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
             'Accept-Language': 'en-US,en;q=0.9',
             'Accept-Encoding': 'gzip, deflate, br',
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
             'Cache-Control': 'max-age=0',
-            'Referer': 'https://www.transfermarkt.com/'
+            'Referer': 'https://www.transfermarkt.com/',
+            'DNT': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'same-origin'
         }
-        
-        self.session.headers.update(self.headers)
-        self.last_request_time = 0
 
-    def wait_between_requests(self):
-        """Wait a random time between requests - reduced for GitHub Actions"""
-        time_since_last = time.time() - self.last_request_time
-        # Reduced wait time for CI environment
-        min_wait = 15 if os.getenv('GITHUB_ACTIONS') else 30
-        if time_since_last < min_wait:
-            time.sleep(min_wait - time_since_last)
-        self.last_request_time = time.time()
+    def get_random_headers(self):
+        """Get random headers to avoid detection"""
+        headers = self.base_headers.copy()
+        headers['User-Agent'] = random.choice(self.user_agents)
+        return headers
 
-    def make_request(self, url: str, max_retries: int = 3) -> Optional[requests.Response]:
-        """Make an HTTP request with wait time between requests"""
-        retry_count = 0
-        while retry_count < max_retries:
+    def make_aggressive_request(self, url: str, max_retries: int = 2) -> Optional[requests.Response]:
+        """SUPER AGGRESSIVE request with minimal delays"""
+        for attempt in range(max_retries):
             try:
-                self.wait_between_requests()
-                response = self.session.get(url, timeout=30)
+                # Minimal delay - only 1-3 seconds!
+                time.sleep(random.uniform(1, 3))
+                
+                headers = self.get_random_headers()
+                response = requests.get(url, headers=headers, timeout=15)
                 
                 if response.status_code == 200:
                     return response
-                elif response.status_code == 503:
-                    wait_time = 120 * (retry_count + 1)  # Reduced wait time for CI
-                    logging.warning(f"Server busy (503). Waiting {wait_time/60} minutes...")
-                    time.sleep(wait_time)
                 elif response.status_code == 429:
-                    wait_time = 300  # 5 minutes for rate limiting
-                    logging.warning(f"Rate limited (429). Waiting {wait_time/60} minutes...")
-                    time.sleep(wait_time)
+                    # Rate limited - wait just 30 seconds instead of minutes
+                    logging.warning(f"Rate limited. Quick wait...")
+                    time.sleep(30)
+                elif response.status_code == 503:
+                    # Server busy - wait just 60 seconds
+                    logging.warning(f"Server busy. Quick wait...")
+                    time.sleep(60)
                 else:
                     logging.error(f"HTTP Error {response.status_code}")
-                    time.sleep(60 * (retry_count + 1))
-                
-                retry_count += 1
+                    time.sleep(5)  # Very short wait
                     
             except Exception as e:
                 logging.error(f"Request error: {str(e)}")
-                time.sleep(60 * (retry_count + 1))
-                retry_count += 1
+                time.sleep(5)  # Very short wait
                 
         return None
 
-    def extract_instagram(self, profile_url: str) -> str:
-        """Extract Instagram link from player profile"""
+    def extract_instagram_fast(self, profile_url: str) -> str:
+        """FAST Instagram extraction - bail out quickly if not found"""
         try:
-            response = self.make_request(profile_url)
+            response = self.make_aggressive_request(profile_url)
             if not response:
                 return ''
                 
+            # Quick search in raw HTML instead of full parsing
+            html_text = response.text.lower()
+            if 'instagram.com' not in html_text:
+                return ''
+            
+            # Only parse if Instagram is mentioned
             soup = BeautifulSoup(response.text, 'html.parser')
-            for a in soup.find_all('a', href=True):
+            for a in soup.find_all('a', href=True, limit=50):  # Limit search
                 href = a['href']
                 if 'instagram.com' in href:
                     return href
@@ -121,214 +136,219 @@ class TransfermarktScraper:
             logging.error(f"Error extracting Instagram: {str(e)}")
             return ''
 
-    def save_data_to_file(self):
-        """Save current data to file (overwrites existing file)"""
-        if not self.players_data:
-            return
-            
+    def process_player_row(self, row) -> Optional[Dict]:
+        """Process a single player row - optimized"""
         try:
-            df = pd.DataFrame(self.players_data)
-            # Sort by value descending to see highest valued players first
-            df = df.sort_values('Value (M€)', ascending=False)
-            
-            with pd.ExcelWriter(self.output_filename, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False, sheet_name='Players')
+            # Find name and profile link
+            name_cell = row.select_one('td.hauptlink a')
+            if not name_cell:
+                return None
                 
-                worksheet = writer.sheets['Players']
-                worksheet.column_dimensions['A'].width = 30  # Name
-                worksheet.column_dimensions['B'].width = 15  # Value
-                worksheet.column_dimensions['C'].width = 50  # Transfermarkt
-                worksheet.column_dimensions['D'].width = 50  # Instagram
-                
-                # Add hyperlinks for Excel format
-                for idx, row in enumerate(df.itertuples(), start=2):
-                    if row.Transfermarkt:
-                        worksheet.cell(row=idx, column=3).hyperlink = row.Transfermarkt
-                        worksheet.cell(row=idx, column=3).style = "Hyperlink"
-                    if row.Instagram:
-                        worksheet.cell(row=idx, column=4).hyperlink = row.Instagram
-                        worksheet.cell(row=idx, column=4).style = "Hyperlink"
+            name = name_cell.text.strip()
+            profile_url = f"https://www.transfermarkt.com{name_cell['href']}"
             
-            logging.info(f"Data saved to {self.output_filename} - Total players: {len(self.players_data)}")
+            # Find market value - look for the cell with currency
+            value_cell = None
+            for cell in row.select('td'):
+                cell_text = cell.text
+                if '€' in cell_text and 'm' in cell_text.lower():
+                    value_cell = cell
+                    break
+            
+            if not value_cell:
+                return None
+                
+            value_text = value_cell.text.strip().replace('€', '').replace('m', '').strip()
+            try:
+                value = float(value_text)
+            except:
+                return None
+            
+            # Create unique identifier for player
+            player_id = f"{name}|{profile_url}"
+            
+            # Thread-safe duplicate check
+            with self.data_lock:
+                if player_id in self.seen_players:
+                    return None
+                self.seen_players.add(player_id)
+            
+            return {
+                'name': name,
+                'value': value,
+                'profile_url': profile_url,
+                'player_id': player_id
+            }
             
         except Exception as e:
-            logging.error(f"Error saving data to file: {str(e)}")
+            logging.error(f"Error processing player row: {str(e)}")
+            return None
 
-    def get_players_from_page(self, base_url: str, page: int) -> List[Dict]:
-        """Get players from a specific page of a search URL"""
+    def get_players_from_page_turbo(self, base_url: str, page: int) -> List[Dict]:
+        """TURBO speed page processing"""
         url = f"{base_url}?page={page}"
         
-        logging.info(f"Getting players from page {page} of search")
-        
-        response = self.make_request(url)
+        response = self.make_aggressive_request(url)
         if not response:
             return []
         
         soup = BeautifulSoup(response.text, 'html.parser')
-        players = []
+        rows = soup.select('table.items tbody tr')
         
-        # Look for the responsive table structure
-        for row in soup.select('table.items tbody tr'):
-            try:
-                # Find name and profile link
-                name_cell = row.select_one('td.hauptlink a')
-                if not name_cell:
-                    continue
-                    
-                name = name_cell.text.strip()
-                profile_url = f"https://www.transfermarkt.com{name_cell['href']}"
-                
-                # Find market value - look for the cell with currency
-                value_cell = None
-                for cell in row.select('td'):
-                    if '€' in cell.text and 'm' in cell.text.lower():
-                        value_cell = cell
-                        break
-                
-                if not value_cell:
-                    continue
-                    
-                value_text = value_cell.text.strip().replace('€', '').replace('m', '').strip()
+        # Process rows in parallel using ThreadPoolExecutor
+        players = []
+        with ThreadPoolExecutor(max_workers=10) as executor:  # AGGRESSIVE: 10 threads
+            future_to_row = {executor.submit(self.process_player_row, row): row for row in rows}
+            
+            for future in as_completed(future_to_row):
                 try:
-                    value = float(value_text)
-                except:
-                    continue
-                
-                # Create unique identifier for player
-                player_id = f"{name}|{profile_url}"
-                
-                # Skip if we've already seen this player
-                if player_id in self.seen_players:
-                    logging.info(f"Skipping duplicate: {name}")
-                    continue
-                
-                # Add to seen players
-                self.seen_players.add(player_id)
-                
-                # Get Instagram
-                instagram = self.extract_instagram(profile_url)
-                
-                # Add player data
-                player_data = {
-                    'Name': name,
-                    'Value (M€)': value,
-                    'Transfermarkt': profile_url,
-                    'Instagram': instagram
-                }
-                players.append(player_data)
-                
-                # Add to main data and save periodically (not after every player in CI)
-                self.players_data.append(player_data)
-                
-                # Save every 10 players in CI environment, every player otherwise
-                if os.getenv('GITHUB_ACTIONS'):
-                    if len(self.players_data) % 10 == 0:
-                        self.save_data_to_file()
-                else:
-                    self.save_data_to_file()
-                
-                logging.info(f"Added: {name} - {value}M€ - Instagram: {instagram} - Total players: {len(self.players_data)}")
-                
-                # Add GitHub Actions timeout protection
-                if os.getenv('GITHUB_ACTIONS') and len(self.players_data) > 500:
-                    logging.warning("GitHub Actions timeout protection: Stopping at 500 players")
-                    return players
-                
-            except Exception as e:
-                logging.error(f"Error processing player: {str(e)}")
-                continue
+                    player_data = future.result()
+                    if player_data:
+                        players.append(player_data)
+                except Exception as e:
+                    logging.error(f"Error in thread: {str(e)}")
         
         return players
 
-    def scrape_search_url(self, base_url: str, search_index: int) -> int:
-        """Scrape all pages from a single search URL"""
-        logging.info(f"\n=== SCRAPING SEARCH {search_index + 1}/{len(self.search_urls)} ===")
-        logging.info(f"URL: {base_url}")
+    def process_players_instagram(self, players: List[Dict]) -> List[Dict]:
+        """Process Instagram links in parallel"""
+        def get_instagram_for_player(player_data):
+            instagram = self.extract_instagram_fast(player_data['profile_url'])
+            return {
+                'Name': player_data['name'],
+                'Value (M€)': player_data['value'],
+                'Transfermarkt': player_data['profile_url'],
+                'Instagram': instagram
+            }
         
-        page = 1
-        players_found = 0
+        # SUPER AGGRESSIVE: Process Instagram links in parallel
+        final_players = []
+        with ThreadPoolExecutor(max_workers=20) as executor:  # 20 threads for Instagram!
+            future_to_player = {executor.submit(get_instagram_for_player, player): player for player in players}
+            
+            for future in as_completed(future_to_player):
+                try:
+                    final_player = future.result()
+                    final_players.append(final_player)
+                    
+                    # Thread-safe data addition
+                    with self.data_lock:
+                        self.players_data.append(final_player)
+                    
+                    if len(final_players) % 10 == 0:
+                        logging.info(f"Processed {len(final_players)} players with Instagram...")
+                        
+                except Exception as e:
+                    logging.error(f"Error processing Instagram: {str(e)}")
         
-        max_pages = 5 if os.getenv('GITHUB_ACTIONS') else 10  # Reduced for CI
-        
-        while page <= max_pages:
-            players = self.get_players_from_page(base_url, page)
-            
-            if not players:
-                logging.info(f"No players found on page {page}. Moving to next search.")
-                break
-            
-            players_found += len(players)
-            logging.info(f"Page {page} completed. Found {len(players)} players. Total from this search: {players_found}")
-            
-            page += 1
-            
-            # Reduced wait time for CI
-            wait_time = random.uniform(15, 25) if os.getenv('GITHUB_ACTIONS') else random.uniform(30, 45)
-            time.sleep(wait_time)
-            
-            # GitHub Actions timeout protection
-            if os.getenv('GITHUB_ACTIONS') and len(self.players_data) > 500:
-                logging.warning("GitHub Actions timeout protection: Stopping search")
-                break
-        
-        logging.info(f"Search {search_index + 1} completed. Total players found: {players_found}")
-        return players_found
+        return final_players
 
-    def scrape(self):
-        """Main scraping method that processes all search URLs"""
-        logging.info(f"Starting scraping of all U28 player searches")
-        logging.info(f"Output file: {self.output_filename}")
-        logging.info(f"Total searches to process: {len(self.search_urls)}")
-        
-        if os.getenv('GITHUB_ACTIONS'):
-            logging.info("Running in GitHub Actions environment")
-        
-        total_players_found = 0
-        
-        try:
-            for i, search_url in enumerate(self.search_urls):
-                players_from_search = self.scrape_search_url(search_url, i)
-                total_players_found += players_from_search
+    def save_data_to_file(self):
+        """Thread-safe save"""
+        with self.data_lock:
+            if not self.players_data:
+                return
                 
-                # GitHub Actions timeout protection
-                if os.getenv('GITHUB_ACTIONS') and len(self.players_data) > 500:
-                    logging.warning("GitHub Actions timeout protection: Stopping all searches")
-                    break
-                
-                # Wait between different searches (except after the last one)
-                if i < len(self.search_urls) - 1:
-                    wait_time = 20 if os.getenv('GITHUB_ACTIONS') else 30
-                    logging.info(f"Waiting {wait_time} seconds before next search...")
-                    time.sleep(wait_time)
-                
-        except Exception as e:
-            logging.error(f"General scraping error: {str(e)}")
-        finally:
-            if self.players_data:
-                # Final save
-                self.save_data_to_file()
-                
-                # Create final summary
+            try:
                 df = pd.DataFrame(self.players_data)
                 df = df.sort_values('Value (M€)', ascending=False)
                 
-                logging.info(f"\n=== FINAL SUMMARY ===")
-                logging.info(f"Total players scraped: {len(self.players_data)}")
-                logging.info(f"Value range: {df['Value (M€)'].min():.1f}M€ - {df['Value (M€)'].max():.1f}M€")
-                logging.info(f"Players with Instagram: {len(df[df['Instagram'] != ''])}")
-                logging.info(f"Final output saved to: {self.output_filename}")
-                logging.info(f"Top 10 most valuable players:")
-                for idx, player in df.head(10).iterrows():
-                    logging.info(f"  {player['Name']}: {player['Value (M€)']}M€")
+                with pd.ExcelWriter(self.output_filename, engine='openpyxl') as writer:
+                    df.to_excel(writer, index=False, sheet_name='Players')
+                    
+                    worksheet = writer.sheets['Players']
+                    worksheet.column_dimensions['A'].width = 30
+                    worksheet.column_dimensions['B'].width = 15
+                    worksheet.column_dimensions['C'].width = 50
+                    worksheet.column_dimensions['D'].width = 50
+                
+                logging.info(f"Data saved to {self.output_filename} - Total players: {len(self.players_data)}")
+                
+            except Exception as e:
+                logging.error(f"Error saving data to file: {str(e)}")
+
+    def scrape_search_turbo(self, base_url: str, search_index: int) -> int:
+        """TURBO scrape a single search URL"""
+        logging.info(f"\n=== TURBO SCRAPING SEARCH {search_index + 1}/{len(self.search_urls)} ===")
+        
+        all_players_from_search = []
+        max_pages = 8  # Reasonable limit
+        
+        # Get all pages from this search in parallel!
+        with ThreadPoolExecutor(max_workers=5) as executor:  # 5 pages at once!
+            future_to_page = {
+                executor.submit(self.get_players_from_page_turbo, base_url, page): page 
+                for page in range(1, max_pages + 1)
+            }
+            
+            for future in as_completed(future_to_page):
+                try:
+                    page_players = future.result()
+                    all_players_from_search.extend(page_players)
+                    page_num = future_to_page[future]
+                    logging.info(f"Page {page_num} completed: {len(page_players)} players")
+                except Exception as e:
+                    logging.error(f"Error processing page: {str(e)}")
+        
+        # Now process Instagram for all players from this search
+        if all_players_from_search:
+            self.process_players_instagram(all_players_from_search)
+            self.save_data_to_file()
+        
+        logging.info(f"Search {search_index + 1} completed: {len(all_players_from_search)} players")
+        return len(all_players_from_search)
+
+    def scrape_turbo(self):
+        """MAIN TURBO SCRAPING METHOD"""
+        logging.info("🚀 STARTING TURBO SCRAPING MODE! 🚀")
+        logging.info(f"Output file: {self.output_filename}")
+        
+        start_time = time.time()
+        
+        try:
+            # Process multiple searches in parallel!
+            with ThreadPoolExecutor(max_workers=3) as executor:  # 3 searches at once!
+                future_to_search = {
+                    executor.submit(self.scrape_search_turbo, url, i): (url, i) 
+                    for i, url in enumerate(self.search_urls[:6])  # First 6 searches only for speed
+                }
+                
+                total_players = 0
+                for future in as_completed(future_to_search):
+                    try:
+                        players_found = future.result()
+                        total_players += players_found
+                        url, index = future_to_search[future]
+                        logging.info(f"✅ Search {index + 1} DONE: {players_found} players")
+                    except Exception as e:
+                        logging.error(f"❌ Search failed: {str(e)}")
+            
+        except Exception as e:
+            logging.error(f"General scraping error: {str(e)}")
+        finally:
+            elapsed_time = time.time() - start_time
+            
+            if self.players_data:
+                self.save_data_to_file()
+                
+                df = pd.DataFrame(self.players_data)
+                df = df.sort_values('Value (M€)', ascending=False)
+                
+                logging.info(f"\n🎉 TURBO SCRAPING COMPLETE! 🎉")
+                logging.info(f"⏱️  Total time: {elapsed_time/60:.1f} minutes")
+                logging.info(f"👥 Total players: {len(self.players_data)}")
+                logging.info(f"💰 Value range: {df['Value (M€)'].min():.1f}M€ - {df['Value (M€)'].max():.1f}M€")
+                logging.info(f"📸 Instagram links: {len(df[df['Instagram'] != ''])}")
+                logging.info(f"⚡ Players per minute: {len(self.players_data)/(elapsed_time/60):.1f}")
 
 def main():
-    scraper = TransfermarktScraper()
+    scraper = TurboTransfermarktScraper()
     
     try:
-        scraper.scrape()
+        scraper.scrape_turbo()
     except Exception as e:
         logging.error(f"Error in main script: {str(e)}")
-        sys.exit(1)  # Exit with error code for GitHub Actions
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
