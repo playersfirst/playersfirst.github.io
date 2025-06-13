@@ -245,7 +245,7 @@ class MatrixTurboScraper:
         logging.info(f"Worker {self.worker_id}: Scraping search {search_index + 1}")
         
         all_players_from_search = []
-        max_pages = 6  # Limit pages for speed
+        max_pages = 10  # Limit pages for speed
         
         for page in range(1, max_pages + 1):
             page_players = self.get_players_from_page(base_url, page)
