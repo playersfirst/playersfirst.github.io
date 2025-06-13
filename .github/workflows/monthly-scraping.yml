@@ -1,5 +1,5 @@
 # .github/workflows/matrix-scraping.yml
-name: MATRIX TURBO Player Data Scraping
+name: MATRIX TURBO Player Data Scraping (15 IPs)
 on:
   schedule:
     # Run on the 1st of every month at 2 AM UTC
@@ -7,15 +7,15 @@ on:
   workflow_dispatch: # Allow manual trigger
 
 jobs:
-  # MATRIX STRATEGY - Multiple machines with different IPs!
+  # MATRIX STRATEGY - 15 machines = 15 different IPs = 1 per search URL!
   matrix-scrape:
     runs-on: ubuntu-latest
     timeout-minutes: 180  # 3 hours per worker
     strategy:
       matrix:
-        worker_id: [0, 1, 2, 3, 4]  # 5 workers = 5 different IPs!
+        worker_id: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]  # 15 workers!
       fail-fast: false  # Don't cancel other workers if one fails
-      max-parallel: 5   # All workers run simultaneously
+      max-parallel: 15  # All 15 workers run simultaneously
     
     steps:
     - name: Checkout repository
@@ -32,11 +32,11 @@ jobs:
         pip install requests pandas beautifulsoup4 openpyxl lxml
         echo "Dependencies installed for worker ${{ matrix.worker_id }}"
     
-    - name: Run Matrix Worker
+    - name: Run Matrix Worker (1 URL per worker)
       run: |
-        echo "🚀 Starting Matrix Worker ${{ matrix.worker_id }}/5..."
-        python scraper.py --worker-id ${{ matrix.worker_id }} --total-workers 5
-        echo "✅ Worker ${{ matrix.worker_id }} completed"
+        echo "🚀 Starting Matrix Worker ${{ matrix.worker_id }}/15 (1 dedicated search URL)..."
+        python scraper.py --worker-id ${{ matrix.worker_id }} --total-workers 15
+        echo "✅ Worker ${{ matrix.worker_id }} completed its dedicated search"
     
     - name: Upload worker results
       uses: actions/upload-artifact@v4
@@ -50,7 +50,7 @@ jobs:
         retention-days: 30
 
   
-  # MERGE JOB - Combines all worker results
+  # MERGE JOB - Combines all 15 worker results
   merge-results:
     needs: matrix-scrape
     runs-on: ubuntu-latest
@@ -83,20 +83,18 @@ jobs:
 
     - name: Merge worker results
       id: merge_step
-      # FIX: Replaced the deprecated `::set-output` with the new $GITHUB_OUTPUT method.
       run: |
         MERGE_SUCCESS="false"
         PLAYER_COUNT=0
         INSTAGRAM_COUNT=0
 
-        # The python script now just prints results. The shell script handles setting the output.
         python -c "
         import pandas as pd
         import json
         import os
         from glob import glob
 
-        print('🔄 Merging worker results...')
+        print('🔄 Merging 15 worker results...')
         all_data = []
         json_files = glob('worker-results/worker-*-results/transfermarkt_worker_*.json')
 
@@ -143,8 +141,8 @@ jobs:
             print(f'✅ Merged file created: {output_filename}')
             print(f'👥 Total unique players: {total_players}')
             print(f'📸 With Instagram: {instagram_count}')
+            print(f'🌐 Data collected from 15 different IPs')
             
-            # Print values for the shell script to capture
             print(f'MERGE_SUCCESS=true')
             print(f'PLAYER_COUNT={total_players}')
             print(f'INSTAGRAM_COUNT={instagram_count}')
@@ -152,7 +150,6 @@ jobs:
             print('❌ No data found across all workers.')
         " > merge_outputs.txt
 
-        # Read the outputs from the python script and set them for the job
         if [ -f merge_outputs.txt ]; then
           while IFS= read -r line; do
             echo "$line" >> $GITHUB_OUTPUT
@@ -172,28 +169,29 @@ jobs:
         else
           PLAYER_COUNT="${{ steps.merge_step.outputs.PLAYER_COUNT }}"
           INSTAGRAM_COUNT="${{ steps.merge_step.outputs.INSTAGRAM_COUNT }}"
-          COMMIT_MSG="🚀 MATRIX Update: ${PLAYER_COUNT} players (${INSTAGRAM_COUNT} with Instagram) - $(date +'%Y-%m-%d %H:%M UTC')"
+          COMMIT_MSG="🚀 15-IP MATRIX Update: ${PLAYER_COUNT} players (${INSTAGRAM_COUNT} with Instagram) - $(date +'%Y-%m-%d %H:%M UTC')"
 
           git commit -m "$COMMIT_MSG"
           git push
-          echo "✅ Matrix results pushed successfully."
+          echo "✅ Matrix results from 15 IPs pushed successfully."
         fi
 
     - name: Upload final merged results
       uses: actions/upload-artifact@v4
       if: always() && steps.merge_step.outputs.MERGE_SUCCESS == 'true'
       with:
-        name: final-merged-results
+        name: final-merged-results-15-workers
         path: jose_new.xlsx
         retention-days: 90
 
     - name: Matrix Summary
       if: always()
       run: |
-        echo "## 🎉 MATRIX SCRAPING WORKFLOW COMPLETE!" >> $GITHUB_STEP_SUMMARY
+        echo "## 🎉 15-IP MATRIX SCRAPING COMPLETE!" >> $GITHUB_STEP_SUMMARY
         if [ "${{ steps.merge_step.outputs.MERGE_SUCCESS }}" == "true" ]; then
-          echo "- **Status:** Successful Merge & Push" >> $GITHUB_STEP_SUMMARY
-          echo "- **Workers used:** 5" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status:** Successful 15-Worker Merge & Push" >> $GITHUB_STEP_SUMMARY
+          echo "- **IPs used:** 15 different GitHub runner IPs" >> $GITHUB_STEP_SUMMARY
+          echo "- **Efficiency:** 1 search URL per IP (perfect distribution)" >> $GITHUB_STEP_SUMMARY
           echo "- **Final file:** jose_new.xlsx" >> $GITHUB_STEP_SUMMARY
           echo "- **Total players:** ${{ steps.merge_step.outputs.PLAYER_COUNT }}" >> $GITHUB_STEP_SUMMARY
           echo "- **With Instagram:** ${{ steps.merge_step.outputs.INSTAGRAM_COUNT }}" >> $GITHUB_STEP_SUMMARY
