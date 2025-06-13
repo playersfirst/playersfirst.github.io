@@ -1,5 +1,5 @@
 # .github/workflows/monthly-scraping.yml
-name: Monthly Player Data Scraping
+name: TURBO Monthly Player Data Scraping
 
 on:
   schedule:
@@ -8,8 +8,9 @@ on:
   workflow_dispatch: # Allow manual trigger
 
 jobs:
-  scrape-and-update:
+  turbo-scrape-and-update:
     runs-on: ubuntu-latest
+    timeout-minutes: 300  # 5 hours max
     
     steps:
     - name: Checkout repository
@@ -25,12 +26,14 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install requests pandas beautifulsoup4 openpyxl lxml
+        pip install requests pandas beautifulsoup4 openpyxl lxml aiohttp
+        echo "Dependencies installed successfully"
     
-    - name: Run scraper
+    - name: Run TURBO scraper
       run: |
+        echo "🚀 Starting TURBO scraping mode..."
         python scraper.py
-        echo "Scraping completed"
+        echo "✅ TURBO scraping completed"
     
     - name: Rename output file to jose_new.xlsx
       run: |
@@ -38,35 +41,47 @@ jobs:
         GENERATED_FILE=$(ls transfermarkt_u28_players_*.xlsx | head -1)
         if [ -f "$GENERATED_FILE" ]; then
           cp "$GENERATED_FILE" jose_new.xlsx
-          echo "File renamed to jose_new.xlsx"
-          ls -la jose_new.xlsx
+          echo "✅ File renamed to jose_new.xlsx"
+          echo "📊 File size: $(du -h jose_new.xlsx | cut -f1)"
+          echo "📈 Player count estimate: $(python -c "import pandas as pd; df=pd.read_excel('jose_new.xlsx'); print(len(df))" 2>/dev/null || echo 'Unable to count')"
         else
-          echo "No generated file found"
+          echo "❌ No generated file found"
+          ls -la *.xlsx || echo "No xlsx files found"
           exit 1
         fi
     
     - name: Commit and push changes
       run: |
         git config --local user.email "action@github.com"
-        git config --local user.name "GitHub Action"
+        git config --local user.name "TURBO Scraper Bot"
         git add jose_new.xlsx
         git add scraper.log
+        git add transfermarkt_u28_players_*.xlsx || true
         
         # Check if there are changes to commit
         if git diff --staged --quiet; then
-          echo "No changes to commit"
+          echo "ℹ️  No changes to commit"
         else
-          git commit -m "Update player data - $(date +'%Y-%m-%d')"
+          PLAYER_COUNT=$(python -c "import pandas as pd; df=pd.read_excel('jose_new.xlsx'); print(len(df))" 2>/dev/null || echo 'unknown')
+          git commit -m "🚀 TURBO Update: ${PLAYER_COUNT} players - $(date +'%Y-%m-%d %H:%M UTC')"
           git push
-          echo "Changes pushed successfully"
+          echo "✅ Changes pushed successfully"
         fi
     
     - name: Upload artifacts (for debugging)
       uses: actions/upload-artifact@v3
       if: always()
       with:
-        name: scraping-results
+        name: turbo-scraping-results
         path: |
           *.xlsx
           *.log
         retention-days: 30
+    
+    - name: Summary
+      if: always()
+      run: |
+        echo "🎉 TURBO SCRAPING WORKFLOW COMPLETE!"
+        echo "📁 Files created:"
+        ls -la *.xlsx *.log || echo "No output files found"
+        echo "📊 Check the artifacts for detailed results"
