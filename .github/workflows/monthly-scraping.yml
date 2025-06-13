@@ -186,4 +186,7 @@ else:
           echo "📊 File size: $(du -h jose_new.xlsx | cut -f1)"
           PLAYER_COUNT=$(python -c "import pandas as pd; df=pd.read_excel('jose_new.xlsx'); print(len(df))" 2>/dev/null || echo 'unknown')
           echo "👥 Total players: ${PLAYER_COUNT}"
+          echo "🌟 Matrix operation completed successfully!"
+        else
+          echo "❌ Matrix operation failed - no output file generated"
         fi
