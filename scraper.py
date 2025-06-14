@@ -155,27 +155,71 @@ class MatrixTurboScraper:
         return None
 
     def extract_instagram_fast(self, profile_url: str) -> str:
-        """Fast Instagram extraction"""
-        try:
-            response = self.make_smart_request(profile_url)
-            if not response:
-                return ''
-                
-            # Quick search in raw HTML
-            html_text = response.text.lower()
-            if 'instagram.com' not in html_text:
-                return ''
+    """Fast Instagram extraction - avoiding Transfermarkt's official Instagram"""
+    try:
+        response = self.make_smart_request(profile_url)
+        if not response:
+            return ''
             
-            soup = BeautifulSoup(response.text, 'html.parser')
+        # Quick search in raw HTML
+        html_text = response.text.lower()
+        if 'instagram.com' not in html_text:
+            return ''
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # List of Transfermarkt official Instagram accounts to exclude
+        excluded_accounts = {
+            'https://www.instagram.com/transfermarkt_official/',
+            'https://instagram.com/transfermarkt_official/',
+            'www.instagram.com/transfermarkt_official/',
+            'instagram.com/transfermarkt_official/',
+            'https://www.instagram.com/transfermarkt/',
+            'https://instagram.com/transfermarkt/',
+            'www.instagram.com/transfermarkt/',
+            'instagram.com/transfermarkt/'
+        }
+        
+        # Find all Instagram links
+        instagram_links = []
+        for a in soup.find_all('a', href=True):
+            href = a['href']
+            if 'instagram.com' in href.lower():
+                # Clean the URL
+                clean_href = href.strip().rstrip('/')
+                if not clean_href.endswith('/'):
+                    clean_href += '/'
+                
+                # Check if it's not a Transfermarkt official account
+                is_excluded = False
+                for excluded in excluded_accounts:
+                    if excluded.lower() in clean_href.lower():
+                        is_excluded = True
+                        break
+                
+                if not is_excluded:
+                    instagram_links.append(clean_href)
+        
+        # Log what we found for debugging
+        if instagram_links:
+            logging.debug(f"Worker {self.worker_id}: Found Instagram links: {instagram_links}")
+            return instagram_links[0]  # Return the first valid one
+        else:
+            # Check if we only found excluded accounts
+            all_instagram_links = []
             for a in soup.find_all('a', href=True):
                 href = a['href']
-                if 'instagram.com' in href:
-                    return href
+                if 'instagram.com' in href.lower():
+                    all_instagram_links.append(href)
+            
+            if all_instagram_links:
+                logging.debug(f"Worker {self.worker_id}: Only found excluded Instagram links: {all_instagram_links}")
+            
             return ''
             
-        except Exception as e:
-            logging.error(f"Worker {self.worker_id}: Error extracting Instagram: {str(e)}")
-            return ''
+    except Exception as e:
+        logging.error(f"Worker {self.worker_id}: Error extracting Instagram: {str(e)}")
+        return ''
 
     def process_player_row(self, row) -> Optional[Dict]:
         """Process a single player row"""
