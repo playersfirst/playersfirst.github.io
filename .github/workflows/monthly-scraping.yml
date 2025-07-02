@@ -255,7 +255,7 @@ jobs:
           COMMIT_MSG="🚀 15-IP MATRIX Update: ${PLAYER_COUNT} players (${INSTAGRAM_COUNT} with Instagram) - $(date +'%Y-%m-%d %H:%M UTC')"
 
           git commit -m "$COMMIT_MSG"
-          git push
+          git push --force origin main
           echo "✅ Matrix results from 15 IPs pushed successfully."
         fi
 
