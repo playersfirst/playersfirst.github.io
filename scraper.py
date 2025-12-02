@@ -80,8 +80,11 @@ class MatrixTurboScraper:
             'Sec-Fetch-Dest': 'document',
             'Sec-Fetch-Mode': 'navigate',
             'Sec-Fetch-Site': 'same-origin',
-            'User-Agent': self.user_agents[worker_id % len(self.user_agents)]  # Worker-specific UA
+            'User-Agent': self.user_agents[worker_id % len(self.user_agents)]
         }
+        
+        # Set session headers
+        self.session.headers.update(self.base_headers)
 
     def distribute_urls(self) -> List[str]:
         """Distribute URLs among workers - OPTIMIZED for 15 workers = 15 URLs"""
@@ -117,42 +120,68 @@ class MatrixTurboScraper:
             headers['Accept-Language'] = random.choice(['en-US,en;q=0.9', 'en-GB,en;q=0.9', 'en;q=0.9'])
         
         # Worker-specific delays
-        worker_delay = 0.5 + (self.worker_id * 0.3)  # Stagger workers
+        worker_delay = 0.5 + (self.worker_id * 0.3)
         return headers, worker_delay
 
-    def make_smart_request(self, url: str, max_retries: int = 3) -> Optional[requests.Response]:
-        """Smart request with worker-specific timing"""
+    def make_smart_request(self, url: str) -> Optional[requests.Response]:
+        """Smart request with INFINITE retries - never gives up until success"""
         headers, base_delay = self.get_worker_headers()
         
-        for attempt in range(max_retries):
+        attempt = 0
+        while True:  # INFINITE LOOP - keeps trying forever
             try:
-                # Worker-specific delay to avoid collision
-                delay = base_delay + random.uniform(0.5, 2.0)
-                time.sleep(delay)
+                time.sleep(base_delay + random.uniform(0.5, 2.0))
                 
-                response = requests.get(url, headers=headers, timeout=20)
+                response = self.session.get(url, headers=headers, timeout=30)
                 
                 if response.status_code == 200:
+                    # Success! We got the data
+                    if attempt > 0:
+                        logging.info(f"Worker {self.worker_id}: ✅ SUCCESS after {attempt + 1} attempts!")
                     return response
-                elif response.status_code == 429:
-                    # Rate limited - exponential backoff per worker
-                    wait_time = (2 ** attempt) * (1 + self.worker_id * 0.5)
-                    logging.warning(f"Worker {self.worker_id}: Rate limited, waiting {wait_time:.1f}s")
-                    time.sleep(wait_time)
-                elif response.status_code == 503:
-                    # Server busy - longer wait with worker offset
-                    wait_time = 30 + (self.worker_id * 10)
-                    logging.warning(f"Worker {self.worker_id}: Server busy, waiting {wait_time}s")
-                    time.sleep(wait_time)
-                else:
-                    logging.error(f"Worker {self.worker_id}: HTTP Error {response.status_code}")
-                    time.sleep(5 + self.worker_id)
                     
-            except Exception as e:
-                logging.error(f"Worker {self.worker_id}: Request error: {str(e)}")
-                time.sleep(5 + self.worker_id)
+                elif response.status_code == 202:
+                    # Server is still processing - wait and try again
+                    wait_time = min(8 + (attempt * 4), 60)  # Cap at 60 seconds max wait
+                    logging.warning(f"Worker {self.worker_id}: 📊 Search processing... retrying in {wait_time}s (attempt {attempt + 1})")
+                    time.sleep(wait_time)
+                    attempt += 1
+                    continue  # Try again
+                    
+                elif response.status_code == 429:
+                    # Rate limited - exponential backoff
+                    wait_time = min((2 ** min(attempt, 6)) * 2, 120)  # Cap at 2 minutes
+                    logging.warning(f"Worker {self.worker_id}: ⏸️  Rate limited, waiting {wait_time:.1f}s")
+                    time.sleep(wait_time)
+                    attempt += 1
+                    continue  # Try again
+                    
+                elif response.status_code == 503:
+                    # Server busy
+                    wait_time = 30
+                    logging.warning(f"Worker {self.worker_id}: 🔄 Server busy, waiting {wait_time}s")
+                    time.sleep(wait_time)
+                    attempt += 1
+                    continue  # Try again
+                    
+                else:
+                    # For other errors, wait and retry
+                    logging.error(f"Worker {self.worker_id}: ❌ HTTP Error {response.status_code}, retrying in 10s")
+                    time.sleep(10)
+                    attempt += 1
+                    continue  # Try again
+                    
+            except requests.exceptions.Timeout:
+                logging.error(f"Worker {self.worker_id}: ⏱️  Timeout, retrying in 10s")
+                time.sleep(10)
+                attempt += 1
+                continue  # Try again
                 
-        return None
+            except Exception as e:
+                logging.error(f"Worker {self.worker_id}: ⚠️  Request error: {str(e)}, retrying in 10s")
+                time.sleep(10)
+                attempt += 1
+                continue  # Try again
 
     def extract_instagram_fast(self, profile_url: str) -> str:
         try:
@@ -348,6 +377,11 @@ class MatrixTurboScraper:
 
     def scrape_matrix_worker(self):
         """Main scraping method for matrix worker"""
+        # Add staggered startup to avoid all workers hitting at once
+        startup_delay = self.worker_id * 3 + random.uniform(0, 5)
+        logging.info(f"Worker {self.worker_id}: Waiting {startup_delay:.1f}s before starting...")
+        time.sleep(startup_delay)
+        
         logging.info(f"🚀 Worker {self.worker_id}/{self.total_workers} STARTING!")
         logging.info(f"📋 Assigned URLs: {len(self.my_search_urls)}")
         
