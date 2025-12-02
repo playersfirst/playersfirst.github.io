@@ -12,19 +12,22 @@ jobs:
     strategy:
       matrix:
         worker_id: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
-      fail-fast: false  # Changed to false - let all workers try
-      max-parallel: 15
+      fail-fast: false
+      max-parallel: 5  # REDUCED - only 5 workers at once instead of 15
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
     
-    # CRITICAL: Stagger worker starts to avoid simultaneous requests
+    # CRITICAL: Heavy stagger to avoid detection
     - name: Stagger Worker Start
       run: |
-        DELAY=$((RANDOM % 30 + ${{ matrix.worker_id }} * 5))
-        echo "Worker ${{ matrix.worker_id }} waiting ${DELAY}s before starting..."
-        sleep $DELAY
+        # Each worker waits 2-5 minutes + worker_id offset
+        BASE_DELAY=$((120 + RANDOM % 180))
+        WORKER_OFFSET=$((${{ matrix.worker_id }} * 15))
+        TOTAL_DELAY=$((BASE_DELAY + WORKER_OFFSET))
+        echo "Worker ${{ matrix.worker_id }} waiting ${TOTAL_DELAY}s (~$((TOTAL_DELAY/60))min) before starting..."
+        sleep $TOTAL_DELAY
     
     - name: Set up Python
       uses: actions/setup-python@v4
