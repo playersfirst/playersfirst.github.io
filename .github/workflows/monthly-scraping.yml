@@ -15,7 +15,7 @@ jobs:
         worker_id: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]  # 15 workers!
         attempt: [1]  # First attempt
       fail-fast: false  # Don't cancel other workers if one fails
-      max-parallel: 15  # All 15 workers run simultaneously
+      max-parallel: 2  # Only 2 workers run at once - be gentle on the site!
     
     steps:
     - name: Checkout repository
@@ -32,11 +32,23 @@ jobs:
         pip install requests pandas beautifulsoup4 openpyxl lxml
         echo "Dependencies installed for worker ${{ matrix.worker_id }}"
     
-    - name: Staggered Start (Avoid simultaneous hits)
+    - name: Staggered Start (3-4 min batches)
       run: |
-        WAIT_TIME=$((RANDOM % 45 + ${{ matrix.worker_id }} * 5))
-        echo "⏳ Worker ${{ matrix.worker_id }} waiting ${WAIT_TIME}s before starting..."
-        sleep $WAIT_TIME
+        # Calculate which batch this worker belongs to (batches of 2)
+        BATCH=$(((${{ matrix.worker_id }} / 2)))
+        POSITION_IN_BATCH=$(((${{ matrix.worker_id }} % 2)))
+        
+        # Each batch waits 3-4 minutes after the previous batch
+        BATCH_DELAY=$((BATCH * 210))  # 3.5 minutes (210 seconds) between batches
+        
+        # Small stagger within batch (0-30 seconds)
+        WITHIN_BATCH_DELAY=$((POSITION_IN_BATCH * 15 + RANDOM % 15))
+        
+        TOTAL_WAIT=$((BATCH_DELAY + WITHIN_BATCH_DELAY))
+        
+        echo "📦 Worker ${{ matrix.worker_id }} in Batch $BATCH (position $POSITION_IN_BATCH)"
+        echo "⏳ Waiting ${TOTAL_WAIT}s (${BATCH_DELAY}s batch + ${WITHIN_BATCH_DELAY}s stagger)..."
+        sleep $TOTAL_WAIT
         echo "✅ Worker ${{ matrix.worker_id }} ready to scrape!"
     
     - name: Run Matrix Worker (1 shuffled URL per worker)
@@ -93,7 +105,7 @@ jobs:
       matrix:
         retry_attempt: [1, 2]  # 2 retry attempts
       fail-fast: false
-      max-parallel: 15
+      max-parallel: 2  # Also limit retries to 2 at a time
     
     steps:
     - name: Checkout repository
@@ -132,13 +144,18 @@ jobs:
       run: |
         echo "🔄 RETRY ATTEMPT ${{ matrix.retry_attempt }} - Running on NEW GitHub IP!"
         
+        WORKER_COUNT=0
         for failed_file in failed_workers/*/worker_*.txt; do
           if [ -f "$failed_file" ]; then
             WORKER_ID=$(cat "$failed_file")
             echo "🔄 Retrying Worker $WORKER_ID (attempt ${{ matrix.retry_attempt }})..."
             
-            # Random delay to avoid IP collision
-            sleep $((RANDOM % 30 + 10))
+            # Stagger retries: 3-4 minutes between each worker
+            if [ $WORKER_COUNT -gt 0 ]; then
+              RETRY_DELAY=$((180 + RANDOM % 60))  # 3-4 minutes
+              echo "⏳ Waiting ${RETRY_DELAY}s before next retry..."
+              sleep $RETRY_DELAY
+            fi
             
             python scraper.py --worker-id "$WORKER_ID" --total-workers 15 || true
             
@@ -148,6 +165,8 @@ jobs:
             else
               echo "❌ Worker $WORKER_ID still failing (attempt ${{ matrix.retry_attempt }})"
             fi
+            
+            WORKER_COUNT=$((WORKER_COUNT + 1))
           fi
         done
     
@@ -368,7 +387,7 @@ jobs:
         echo "## 🎉 AUTO-RETRY MATRIX SCRAPING COMPLETE!" >> $GITHUB_STEP_SUMMARY
         if [ "${{ steps.merge_step.outputs.MERGE_SUCCESS }}" == "true" ]; then
           echo "- **Status:** ✅ Successful Merge & Push" >> $GITHUB_STEP_SUMMARY
-          echo "- **Strategy:** Shuffled URLs + Auto-retry on new IPs" >> $GITHUB_STEP_SUMMARY
+          echo "- **Strategy:** Batched execution (2 workers per 3.5min batch)" >> $GITHUB_STEP_SUMMARY
           echo "- **IPs used:** 15 different GitHub runner IPs (+ retry IPs)" >> $GITHUB_STEP_SUMMARY
           echo "- **Retry attempts:** Up to 2 automatic retries per failed worker" >> $GITHUB_STEP_SUMMARY
           echo "- **Final file:** jose_new.xlsx" >> $GITHUB_STEP_SUMMARY
