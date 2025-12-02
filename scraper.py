@@ -120,8 +120,8 @@ class MatrixTurboScraper:
         worker_delay = 0.5 + (self.worker_id * 0.3)  # Stagger workers
         return headers, worker_delay
 
-    def make_smart_request(self, url: str, max_retries: int = 3) -> Optional[requests.Response]:
-        """Smart request with worker-specific timing"""
+    def make_smart_request(self, url: str, max_retries: int = 6) -> Optional[requests.Response]:
+        """Smart request with worker-specific timing and HTTP 202 handling"""
         headers, base_delay = self.get_worker_headers()
         
         for attempt in range(max_retries):
@@ -130,28 +130,35 @@ class MatrixTurboScraper:
                 delay = base_delay + random.uniform(0.5, 2.0)
                 time.sleep(delay)
                 
-                response = requests.get(url, headers=headers, timeout=20)
+                response = requests.get(url, headers=headers, timeout=30)
                 
                 if response.status_code == 200:
                     return response
+                elif response.status_code == 202:
+                    # Request accepted but processing - wait longer and retry
+                    wait_time = 8 + (attempt * 4) + (self.worker_id * 1.5)
+                    logging.warning(f"Worker {self.worker_id}: HTTP 202 (Processing), waiting {wait_time:.1f}s (attempt {attempt + 1}/{max_retries})")
+                    time.sleep(wait_time)
+                    continue
                 elif response.status_code == 429:
                     # Rate limited - exponential backoff per worker
                     wait_time = (2 ** attempt) * (1 + self.worker_id * 0.5)
-                    logging.warning(f"Worker {self.worker_id}: Rate limited, waiting {wait_time:.1f}s")
+                    logging.warning(f"Worker {self.worker_id}: Rate limited (429), waiting {wait_time:.1f}s")
                     time.sleep(wait_time)
                 elif response.status_code == 503:
                     # Server busy - longer wait with worker offset
                     wait_time = 30 + (self.worker_id * 10)
-                    logging.warning(f"Worker {self.worker_id}: Server busy, waiting {wait_time}s")
+                    logging.warning(f"Worker {self.worker_id}: Server busy (503), waiting {wait_time}s")
                     time.sleep(wait_time)
                 else:
-                    logging.error(f"Worker {self.worker_id}: HTTP Error {response.status_code}")
+                    logging.error(f"Worker {self.worker_id}: HTTP {response.status_code} (attempt {attempt + 1}/{max_retries})")
                     time.sleep(5 + self.worker_id)
                     
             except Exception as e:
                 logging.error(f"Worker {self.worker_id}: Request error: {str(e)}")
                 time.sleep(5 + self.worker_id)
-                
+        
+        logging.error(f"Worker {self.worker_id}: Failed after {max_retries} attempts for: {url}")
         return None
 
     def extract_instagram_fast(self, profile_url: str) -> str:
