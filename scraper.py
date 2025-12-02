@@ -114,14 +114,14 @@ class MatrixTurboScraper:
         return headers
 
     def make_smart_request(self, url: str, max_retries: int = 5) -> Optional[requests.Response]:
-        """Enhanced request handling with 202 status support"""
+        """Enhanced request handling with 202/403 status support"""
         for attempt in range(max_retries):
             try:
                 headers = self.get_worker_headers()
                 
-                # Longer, more variable delays
-                base_delay = 2.0 + (self.worker_id * 0.5)
-                delay = base_delay + random.uniform(1.0, 4.0)
+                # MUCH longer delays - appear more human
+                base_delay = 5.0 + (self.worker_id * 1.0)
+                delay = base_delay + random.uniform(3.0, 8.0)
                 time.sleep(delay)
                 
                 response = self.session.get(url, headers=headers, timeout=30)
@@ -130,32 +130,41 @@ class MatrixTurboScraper:
                     return response
                     
                 elif response.status_code == 202:
-                    # 202 = Accepted but not ready - WAIT LONGER
-                    wait_time = 10 + (attempt * 5) + random.uniform(0, 5)
+                    # 202 = Accepted but not ready - WAIT MUCH LONGER
+                    wait_time = 30 + (attempt * 15) + random.uniform(5, 20)
                     logging.warning(f"Worker {self.worker_id}: Got 202 (Accepted), waiting {wait_time:.1f}s (attempt {attempt+1}/{max_retries})")
                     time.sleep(wait_time)
                     
+                elif response.status_code == 403:
+                    # 403 = Forbidden - Bot detected, wait even longer
+                    wait_time = 60 + (attempt * 30) + random.uniform(10, 30)
+                    logging.warning(f"Worker {self.worker_id}: Got 403 (Forbidden), waiting {wait_time:.1f}s (attempt {attempt+1}/{max_retries})")
+                    time.sleep(wait_time)
+                    
+                    # Change user agent on 403
+                    self.base_headers['User-Agent'] = random.choice(self.user_agents)
+                    
                 elif response.status_code == 429:
-                    wait_time = (2 ** attempt) * 10 + random.uniform(0, 10)
+                    wait_time = (2 ** attempt) * 20 + random.uniform(0, 20)
                     logging.warning(f"Worker {self.worker_id}: Rate limited, waiting {wait_time:.1f}s")
                     time.sleep(wait_time)
                     
                 elif response.status_code == 503:
-                    wait_time = 60 + random.uniform(0, 30)
+                    wait_time = 90 + random.uniform(0, 60)
                     logging.warning(f"Worker {self.worker_id}: Server busy, waiting {wait_time:.1f}s")
                     time.sleep(wait_time)
                     
                 else:
                     logging.error(f"Worker {self.worker_id}: HTTP Error {response.status_code}")
-                    time.sleep(10 + random.uniform(0, 5))
+                    time.sleep(20 + random.uniform(0, 10))
                     
             except requests.exceptions.Timeout:
                 logging.error(f"Worker {self.worker_id}: Timeout on attempt {attempt+1}")
-                time.sleep(15 + random.uniform(0, 10))
+                time.sleep(30 + random.uniform(0, 20))
                 
             except Exception as e:
                 logging.error(f"Worker {self.worker_id}: Request error: {str(e)}")
-                time.sleep(10 + random.uniform(0, 5))
+                time.sleep(20 + random.uniform(0, 10))
                 
         logging.error(f"Worker {self.worker_id}: Failed after {max_retries} attempts")
         return None
