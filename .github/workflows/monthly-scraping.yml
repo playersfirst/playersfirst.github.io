@@ -1,5 +1,4 @@
-# .github/workflows/matrix-scraping.yml
-name: MATRIX TURBO Player Data Scraping (15 IPs + Shuffled URLs)
+name: MATRIX TURBO Player Data Scraping (15 IPs + Auto Retry)
 on:
   schedule:
     # Run on the 1st of every month at 2 AM UTC
@@ -14,6 +13,7 @@ jobs:
     strategy:
       matrix:
         worker_id: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]  # 15 workers!
+        attempt: [1]  # First attempt
       fail-fast: false  # Don't cancel other workers if one fails
       max-parallel: 15  # All 15 workers run simultaneously
     
@@ -40,14 +40,27 @@ jobs:
         echo "✅ Worker ${{ matrix.worker_id }} ready to scrape!"
     
     - name: Run Matrix Worker (1 shuffled URL per worker)
+      id: scrape_step
+      continue-on-error: true
       run: |
         echo "🚀 Starting Matrix Worker ${{ matrix.worker_id }}/15 (1 shuffled search URL)..."
         python scraper.py --worker-id ${{ matrix.worker_id }} --total-workers 15
-        echo "✅ Worker ${{ matrix.worker_id }} completed its dedicated search"
+        echo "scrape_status=$?" >> $GITHUB_OUTPUT
+    
+    - name: Check if scraping succeeded
+      id: check_success
+      run: |
+        if [ -f "transfermarkt_worker_${{ matrix.worker_id }}_"*.xlsx ]; then
+          echo "✅ Worker ${{ matrix.worker_id }} completed successfully"
+          echo "success=true" >> $GITHUB_OUTPUT
+        else
+          echo "❌ Worker ${{ matrix.worker_id }} failed - no output file"
+          echo "success=false" >> $GITHUB_OUTPUT
+        fi
     
     - name: Upload worker results
       uses: actions/upload-artifact@v4
-      if: always()
+      if: steps.check_success.outputs.success == 'true'
       with:
         name: worker-${{ matrix.worker_id }}-results
         path: |
@@ -56,10 +69,103 @@ jobs:
           scraper.log
         retention-days: 30
 
-  
-  # MERGE JOB - Combines all worker results
-  merge-results:
+    - name: Save failed worker ID for retry
+      if: steps.check_success.outputs.success == 'false'
+      run: |
+        mkdir -p failed_workers
+        echo "${{ matrix.worker_id }}" > failed_workers/worker_${{ matrix.worker_id }}.txt
+    
+    - name: Upload failed worker marker
+      uses: actions/upload-artifact@v4
+      if: steps.check_success.outputs.success == 'false'
+      with:
+        name: failed-worker-${{ matrix.worker_id }}
+        path: failed_workers/worker_${{ matrix.worker_id }}.txt
+        retention-days: 1
+
+  # RETRY JOB - Automatically retries failed workers on new IPs (up to 2 more attempts)
+  retry-failed-workers:
     needs: matrix-scrape
+    runs-on: ubuntu-latest
+    if: always()
+    timeout-minutes: 180
+    strategy:
+      matrix:
+        retry_attempt: [1, 2]  # 2 retry attempts
+      fail-fast: false
+      max-parallel: 15
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install requests pandas beautifulsoup4 openpyxl lxml
+    
+    - name: Download failed worker markers
+      uses: actions/download-artifact@v4
+      continue-on-error: true
+      with:
+        pattern: failed-worker-*
+        path: failed_workers/
+    
+    - name: Check for failed workers
+      id: check_failed
+      run: |
+        if [ -d "failed_workers" ] && [ "$(ls -A failed_workers/*/worker_*.txt 2>/dev/null)" ]; then
+          echo "failed_exist=true" >> $GITHUB_OUTPUT
+          echo "📋 Found failed workers to retry (attempt ${{ matrix.retry_attempt }})"
+        else
+          echo "failed_exist=false" >> $GITHUB_OUTPUT
+          echo "✅ No failed workers found"
+        fi
+    
+    - name: Retry all failed workers
+      if: steps.check_failed.outputs.failed_exist == 'true'
+      run: |
+        echo "🔄 RETRY ATTEMPT ${{ matrix.retry_attempt }} - Running on NEW GitHub IP!"
+        
+        for failed_file in failed_workers/*/worker_*.txt; do
+          if [ -f "$failed_file" ]; then
+            WORKER_ID=$(cat "$failed_file")
+            echo "🔄 Retrying Worker $WORKER_ID (attempt ${{ matrix.retry_attempt }})..."
+            
+            # Random delay to avoid IP collision
+            sleep $((RANDOM % 30 + 10))
+            
+            python scraper.py --worker-id "$WORKER_ID" --total-workers 15 || true
+            
+            # Check if it succeeded this time
+            if ls transfermarkt_worker_${WORKER_ID}_*.xlsx 1> /dev/null 2>&1; then
+              echo "✅ Worker $WORKER_ID succeeded on retry!"
+            else
+              echo "❌ Worker $WORKER_ID still failing (attempt ${{ matrix.retry_attempt }})"
+            fi
+          fi
+        done
+    
+    - name: Upload retry results
+      uses: actions/upload-artifact@v4
+      if: always() && steps.check_failed.outputs.failed_exist == 'true'
+      with:
+        name: retry-attempt-${{ matrix.retry_attempt }}-results
+        path: |
+          transfermarkt_worker_*.xlsx
+          transfermarkt_worker_*.json
+          scraper.log
+        retention-days: 30
+
+  
+  # MERGE JOB - Combines all worker results (including retries)
+  merge-results:
+    needs: [matrix-scrape, retry-failed-workers]
     runs-on: ubuntu-latest
     if: always()
 
@@ -80,7 +186,7 @@ jobs:
         python -m pip install --upgrade pip
         pip install pandas openpyxl
 
-    - name: Download all worker results
+    - name: Download all worker results (including retries)
       uses: actions/download-artifact@v4
       with:
         path: worker-results/
@@ -118,9 +224,9 @@ jobs:
             return df
 
         def merge_xlsx_files():
-            print('🔄 Merging worker XLSX results (with shuffled URLs)...')
+            print('🔄 Merging ALL worker results (original + retries)...')
             
-            xlsx_files = glob('worker-results/worker-*-results/transfermarkt_worker_*.xlsx')
+            xlsx_files = glob('worker-results/**/transfermarkt_worker_*.xlsx', recursive=True)
             
             if not xlsx_files:
                 print('❌ No XLSX result files found to merge.')
@@ -197,7 +303,7 @@ jobs:
             print(f'✅ Merged file created: {output_filename}')
             print(f'👥 Total unique players: {total_players}')
             print(f'📸 With Instagram (after cleaning): {instagram_count}')
-            print(f'🔀 URLs were shuffled to work around bad IPs')
+            print(f'🔄 Includes data from retry attempts')
             
             return True, total_players, instagram_count
 
@@ -241,33 +347,33 @@ jobs:
         else
           PLAYER_COUNT="${{ steps.merge_step.outputs.PLAYER_COUNT }}"
           INSTAGRAM_COUNT="${{ steps.merge_step.outputs.INSTAGRAM_COUNT }}"
-          COMMIT_MSG="🔀 Shuffled 15-IP MATRIX Update: ${PLAYER_COUNT} players (${INSTAGRAM_COUNT} with Instagram) - $(date +'%Y-%m-%d %H:%M UTC')"
+          COMMIT_MSG="🔄 Auto-Retry MATRIX Update: ${PLAYER_COUNT} players (${INSTAGRAM_COUNT} with Instagram) - $(date +'%Y-%m-%d %H:%M UTC')"
 
           git commit -m "$COMMIT_MSG"
           git push --force origin main
-          echo "✅ Matrix results from 15 IPs pushed successfully."
+          echo "✅ Matrix results with auto-retry pushed successfully."
         fi
 
     - name: Upload final merged results
       uses: actions/upload-artifact@v4
       if: always() && steps.merge_step.outputs.MERGE_SUCCESS == 'true'
       with:
-        name: final-merged-results-shuffled
+        name: final-merged-results-with-retries
         path: jose_new.xlsx
         retention-days: 90
 
     - name: Matrix Summary
       if: always()
       run: |
-        echo "## 🎉 SHUFFLED 15-IP MATRIX SCRAPING COMPLETE!" >> $GITHUB_STEP_SUMMARY
+        echo "## 🎉 AUTO-RETRY MATRIX SCRAPING COMPLETE!" >> $GITHUB_STEP_SUMMARY
         if [ "${{ steps.merge_step.outputs.MERGE_SUCCESS }}" == "true" ]; then
           echo "- **Status:** ✅ Successful Merge & Push" >> $GITHUB_STEP_SUMMARY
-          echo "- **Strategy:** URLs shuffled each run to work around bad IPs" >> $GITHUB_STEP_SUMMARY
-          echo "- **IPs used:** 15 different GitHub runner IPs" >> $GITHUB_STEP_SUMMARY
+          echo "- **Strategy:** Shuffled URLs + Auto-retry on new IPs" >> $GITHUB_STEP_SUMMARY
+          echo "- **IPs used:** 15 different GitHub runner IPs (+ retry IPs)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Retry attempts:** Up to 2 automatic retries per failed worker" >> $GITHUB_STEP_SUMMARY
           echo "- **Final file:** jose_new.xlsx" >> $GITHUB_STEP_SUMMARY
           echo "- **Total players:** ${{ steps.merge_step.outputs.PLAYER_COUNT }}" >> $GITHUB_STEP_SUMMARY
           echo "- **With Instagram:** ${{ steps.merge_step.outputs.INSTAGRAM_COUNT }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Tip:** Re-run workflow 2-3 times to cover all URLs if some workers failed" >> $GITHUB_STEP_SUMMARY
         else
           echo "- **Status:** ❌ Merge Failed" >> $GITHUB_STEP_SUMMARY
           echo "- **Details:** Check logs for merge errors" >> $GITHUB_STEP_SUMMARY
