@@ -1,5 +1,5 @@
 # .github/workflows/matrix-scraping.yml
-name: MATRIX TURBO Player Data Scraping (15 IPs)
+name: MATRIX TURBO Player Data Scraping (15 IPs + Shuffled URLs)
 on:
   schedule:
     # Run on the 1st of every month at 2 AM UTC
@@ -7,7 +7,7 @@ on:
   workflow_dispatch: # Allow manual trigger
 
 jobs:
-  # MATRIX STRATEGY - 15 machines = 15 different IPs = 1 per search URL!
+  # MATRIX STRATEGY - 15 machines = 15 different IPs, URLs shuffled each run!
   matrix-scrape:
     runs-on: ubuntu-latest
     timeout-minutes: 180  # 3 hours per worker
@@ -34,14 +34,14 @@ jobs:
     
     - name: Staggered Start (Avoid simultaneous hits)
       run: |
-        WAIT_TIME=$((RANDOM % 30 + ${{ matrix.worker_id }} * 3))
+        WAIT_TIME=$((RANDOM % 45 + ${{ matrix.worker_id }} * 5))
         echo "⏳ Worker ${{ matrix.worker_id }} waiting ${WAIT_TIME}s before starting..."
         sleep $WAIT_TIME
         echo "✅ Worker ${{ matrix.worker_id }} ready to scrape!"
     
-    - name: Run Matrix Worker (1 URL per worker)
+    - name: Run Matrix Worker (1 shuffled URL per worker)
       run: |
-        echo "🚀 Starting Matrix Worker ${{ matrix.worker_id }}/15 (1 dedicated search URL)..."
+        echo "🚀 Starting Matrix Worker ${{ matrix.worker_id }}/15 (1 shuffled search URL)..."
         python scraper.py --worker-id ${{ matrix.worker_id }} --total-workers 15
         echo "✅ Worker ${{ matrix.worker_id }} completed its dedicated search"
     
@@ -57,7 +57,7 @@ jobs:
         retention-days: 30
 
   
-  # MERGE JOB - Combines all 15 worker results from XLSX files
+  # MERGE JOB - Combines all worker results
   merge-results:
     needs: matrix-scrape
     runs-on: ubuntu-latest
@@ -118,7 +118,7 @@ jobs:
             return df
 
         def merge_xlsx_files():
-            print('🔄 Merging 15 worker XLSX results...')
+            print('🔄 Merging worker XLSX results (with shuffled URLs)...')
             
             xlsx_files = glob('worker-results/worker-*-results/transfermarkt_worker_*.xlsx')
             
@@ -197,8 +197,7 @@ jobs:
             print(f'✅ Merged file created: {output_filename}')
             print(f'👥 Total unique players: {total_players}')
             print(f'📸 With Instagram (after cleaning): {instagram_count}')
-            print(f'🌐 Data collected from 15 different IPs')
-            print(f'🧹 Transfermarkt Instagram URLs removed')
+            print(f'🔀 URLs were shuffled to work around bad IPs')
             
             return True, total_players, instagram_count
 
@@ -242,7 +241,7 @@ jobs:
         else
           PLAYER_COUNT="${{ steps.merge_step.outputs.PLAYER_COUNT }}"
           INSTAGRAM_COUNT="${{ steps.merge_step.outputs.INSTAGRAM_COUNT }}"
-          COMMIT_MSG="🚀 15-IP MATRIX Update: ${PLAYER_COUNT} players (${INSTAGRAM_COUNT} with Instagram) - $(date +'%Y-%m-%d %H:%M UTC')"
+          COMMIT_MSG="🔀 Shuffled 15-IP MATRIX Update: ${PLAYER_COUNT} players (${INSTAGRAM_COUNT} with Instagram) - $(date +'%Y-%m-%d %H:%M UTC')"
 
           git commit -m "$COMMIT_MSG"
           git push --force origin main
@@ -253,22 +252,22 @@ jobs:
       uses: actions/upload-artifact@v4
       if: always() && steps.merge_step.outputs.MERGE_SUCCESS == 'true'
       with:
-        name: final-merged-results-15-workers
+        name: final-merged-results-shuffled
         path: jose_new.xlsx
         retention-days: 90
 
     - name: Matrix Summary
       if: always()
       run: |
-        echo "## 🎉 15-IP MATRIX SCRAPING COMPLETE!" >> $GITHUB_STEP_SUMMARY
+        echo "## 🎉 SHUFFLED 15-IP MATRIX SCRAPING COMPLETE!" >> $GITHUB_STEP_SUMMARY
         if [ "${{ steps.merge_step.outputs.MERGE_SUCCESS }}" == "true" ]; then
-          echo "- **Status:** ✅ Successful 15-Worker Merge & Push" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status:** ✅ Successful Merge & Push" >> $GITHUB_STEP_SUMMARY
+          echo "- **Strategy:** URLs shuffled each run to work around bad IPs" >> $GITHUB_STEP_SUMMARY
           echo "- **IPs used:** 15 different GitHub runner IPs" >> $GITHUB_STEP_SUMMARY
-          echo "- **Efficiency:** 1 search URL per IP (perfect distribution)" >> $GITHUB_STEP_SUMMARY
           echo "- **Final file:** jose_new.xlsx" >> $GITHUB_STEP_SUMMARY
           echo "- **Total players:** ${{ steps.merge_step.outputs.PLAYER_COUNT }}" >> $GITHUB_STEP_SUMMARY
           echo "- **With Instagram:** ${{ steps.merge_step.outputs.INSTAGRAM_COUNT }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Cleanup:** ✅ Transfermarkt Instagram URLs removed" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tip:** Re-run workflow 2-3 times to cover all URLs if some workers failed" >> $GITHUB_STEP_SUMMARY
         else
           echo "- **Status:** ❌ Merge Failed" >> $GITHUB_STEP_SUMMARY
           echo "- **Details:** Check logs for merge errors" >> $GITHUB_STEP_SUMMARY
