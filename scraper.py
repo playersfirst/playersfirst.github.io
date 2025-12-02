@@ -11,7 +11,6 @@ from bs4 import BeautifulSoup
 import json
 import argparse
 
-# Configure logging for GitHub Actions
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -29,71 +28,60 @@ class MatrixTurboScraper:
         self.session = requests.Session()
         self.seen_players: Set[str] = set()
         
-        # Set up output filename with worker ID
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         self.output_filename = f"transfermarkt_worker_{worker_id}_{timestamp}.xlsx"
         self.json_output = f"transfermarkt_worker_{worker_id}_{timestamp}.json"
         
-        # ALL search URLs - will be distributed among workers
         self.all_search_urls = [
-            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526065",  # U28 players 200-30M
-            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526071",  # U28 players 30-20M
-            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526075",  # U28 players 20-15M
-            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526078",  # U28 players 15-12M
-            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526082",  # U28 players 12-10M
-            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526083",  # U28 players 10-8M
-            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526088",  # U28 players 8-7M
-            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526095",  # U28 players 7-6M
-            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526097",  # U28 players 6-5M
-            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526115",  # U24 players 5-4M
-            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526122",  # U24 players 4-3.5M
-            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526126",  # U24 players 3.5-3M
-            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526128",  # U24 players 3-2.5M
-            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526130",  # U24 players 2.5-2.2M
-            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526131",  # U24 players 2.2M
+            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526065",
+            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526071",
+            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526075",
+            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526078",
+            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526082",
+            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526083",
+            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526088",
+            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526095",
+            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526097",
+            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526115",
+            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526122",
+            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526126",
+            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526128",
+            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526130",
+            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526131",
         ]
         
-        # Distribute URLs among workers
         self.my_search_urls = self.distribute_urls()
         
-        # Different user agents for each worker
+        # More realistic user agents
         self.user_agents = [
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0',
-            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/120.0.0.0',
-            'Mozilla/5.0 (X11; Ubuntu; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/121.0',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15'
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0',
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Safari/605.1.15',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0'
         ]
         
-        # Worker-specific headers
+        # More realistic headers
         self.base_headers = {
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
             'Accept-Encoding': 'gzip, deflate, br',
             'Connection': 'keep-alive',
             'Upgrade-Insecure-Requests': '1',
-            'Cache-Control': 'max-age=0',
-            'Referer': 'https://www.transfermarkt.com/',
-            'DNT': '1',
             'Sec-Fetch-Dest': 'document',
             'Sec-Fetch-Mode': 'navigate',
-            'Sec-Fetch-Site': 'same-origin',
+            'Sec-Fetch-Site': 'none',
+            'Sec-Fetch-User': '?1',
+            'Cache-Control': 'max-age=0',
             'User-Agent': self.user_agents[worker_id % len(self.user_agents)]
         }
-        
-        # Set session headers
-        self.session.headers.update(self.base_headers)
 
     def distribute_urls(self) -> List[str]:
-        """Distribute URLs among workers - OPTIMIZED for 15 workers = 15 URLs"""
         if self.total_workers == 15 and len(self.all_search_urls) == 15:
-            # Perfect 1:1 ratio - each worker gets exactly 1 URL
             logging.info(f"Worker {self.worker_id}: PERFECT DISTRIBUTION - Assigned URL index {self.worker_id}")
             return [self.all_search_urls[self.worker_id]]
         else:
-            # Fallback to original distribution logic
             urls_per_worker = len(self.all_search_urls) // self.total_workers
             remainder = len(self.all_search_urls) % self.total_workers
             
@@ -112,76 +100,65 @@ class MatrixTurboScraper:
             return my_urls
 
     def get_worker_headers(self):
-        """Get worker-specific headers with random variations"""
+        """Get randomized headers to appear more human-like"""
         headers = self.base_headers.copy()
         
-        # Add some randomness but keep worker identity
+        # Vary accept language
+        lang_options = ['en-US,en;q=0.5', 'en-GB,en;q=0.5', 'en-US,en;q=0.9,es;q=0.8']
+        headers['Accept-Language'] = random.choice(lang_options)
+        
+        # Sometimes add referer
         if random.random() > 0.5:
-            headers['Accept-Language'] = random.choice(['en-US,en;q=0.9', 'en-GB,en;q=0.9', 'en;q=0.9'])
+            headers['Referer'] = 'https://www.transfermarkt.com/'
         
-        # Worker-specific delays
-        worker_delay = 0.5 + (self.worker_id * 0.3)
-        return headers, worker_delay
+        return headers
 
-    def make_smart_request(self, url: str) -> Optional[requests.Response]:
-        """Smart request with INFINITE retries - never gives up until success"""
-        headers, base_delay = self.get_worker_headers()
-        
-        attempt = 0
-        while True:  # INFINITE LOOP - keeps trying forever
+    def make_smart_request(self, url: str, max_retries: int = 5) -> Optional[requests.Response]:
+        """Enhanced request handling with 202 status support"""
+        for attempt in range(max_retries):
             try:
-                time.sleep(base_delay + random.uniform(0.5, 2.0))
+                headers = self.get_worker_headers()
+                
+                # Longer, more variable delays
+                base_delay = 2.0 + (self.worker_id * 0.5)
+                delay = base_delay + random.uniform(1.0, 4.0)
+                time.sleep(delay)
                 
                 response = self.session.get(url, headers=headers, timeout=30)
                 
                 if response.status_code == 200:
-                    # Success! We got the data
-                    if attempt > 0:
-                        logging.info(f"Worker {self.worker_id}: ✅ SUCCESS after {attempt + 1} attempts!")
                     return response
                     
                 elif response.status_code == 202:
-                    # Server is still processing - wait and try again
-                    wait_time = min(8 + (attempt * 4), 60)  # Cap at 60 seconds max wait
-                    logging.warning(f"Worker {self.worker_id}: 📊 Search processing... retrying in {wait_time}s (attempt {attempt + 1})")
+                    # 202 = Accepted but not ready - WAIT LONGER
+                    wait_time = 10 + (attempt * 5) + random.uniform(0, 5)
+                    logging.warning(f"Worker {self.worker_id}: Got 202 (Accepted), waiting {wait_time:.1f}s (attempt {attempt+1}/{max_retries})")
                     time.sleep(wait_time)
-                    attempt += 1
-                    continue  # Try again
                     
                 elif response.status_code == 429:
-                    # Rate limited - exponential backoff
-                    wait_time = min((2 ** min(attempt, 6)) * 2, 120)  # Cap at 2 minutes
-                    logging.warning(f"Worker {self.worker_id}: ⏸️  Rate limited, waiting {wait_time:.1f}s")
+                    wait_time = (2 ** attempt) * 10 + random.uniform(0, 10)
+                    logging.warning(f"Worker {self.worker_id}: Rate limited, waiting {wait_time:.1f}s")
                     time.sleep(wait_time)
-                    attempt += 1
-                    continue  # Try again
                     
                 elif response.status_code == 503:
-                    # Server busy
-                    wait_time = 30
-                    logging.warning(f"Worker {self.worker_id}: 🔄 Server busy, waiting {wait_time}s")
+                    wait_time = 60 + random.uniform(0, 30)
+                    logging.warning(f"Worker {self.worker_id}: Server busy, waiting {wait_time:.1f}s")
                     time.sleep(wait_time)
-                    attempt += 1
-                    continue  # Try again
                     
                 else:
-                    # For other errors, wait and retry
-                    logging.error(f"Worker {self.worker_id}: ❌ HTTP Error {response.status_code}, retrying in 10s")
-                    time.sleep(10)
-                    attempt += 1
-                    continue  # Try again
+                    logging.error(f"Worker {self.worker_id}: HTTP Error {response.status_code}")
+                    time.sleep(10 + random.uniform(0, 5))
                     
             except requests.exceptions.Timeout:
-                logging.error(f"Worker {self.worker_id}: ⏱️  Timeout, retrying in 10s")
-                time.sleep(10)
-                attempt += 1
-                continue  # Try again
+                logging.error(f"Worker {self.worker_id}: Timeout on attempt {attempt+1}")
+                time.sleep(15 + random.uniform(0, 10))
                 
             except Exception as e:
-                logging.error(f"Worker {self.worker_id}: ⚠️  Request error: {str(e)}, retrying in 10s")
-                time.sleep(10)
-                attempt += 1
-                continue  # Try again
+                logging.error(f"Worker {self.worker_id}: Request error: {str(e)}")
+                time.sleep(10 + random.uniform(0, 5))
+                
+        logging.error(f"Worker {self.worker_id}: Failed after {max_retries} attempts")
+        return None
 
     def extract_instagram_fast(self, profile_url: str) -> str:
         try:
@@ -189,14 +166,12 @@ class MatrixTurboScraper:
             if not response:
                 return ''
                 
-            # Quick search in raw HTML
             html_text = response.text.lower()
             if 'instagram.com' not in html_text:
                 return ''
             
             soup = BeautifulSoup(response.text, 'html.parser')
             
-            # List of Transfermarkt official Instagram accounts to exclude
             excluded_accounts = {
                 'https://www.instagram.com/transfermarkt_official/',
                 'https://instagram.com/transfermarkt_official/',
@@ -208,17 +183,14 @@ class MatrixTurboScraper:
                 'instagram.com/transfermarkt/'
             }
             
-            # Find all Instagram links
             instagram_links = []
             for a in soup.find_all('a', href=True):
                 href = a['href']
                 if 'instagram.com' in href.lower():
-                    # Clean the URL
                     clean_href = href.strip().rstrip('/')
                     if not clean_href.endswith('/'):
                         clean_href += '/'
                     
-                    # Check if it's not a Transfermarkt official account
                     is_excluded = False
                     for excluded in excluded_accounts:
                         if excluded.lower() in clean_href.lower():
@@ -228,29 +200,16 @@ class MatrixTurboScraper:
                     if not is_excluded:
                         instagram_links.append(clean_href)
             
-            # Log what we found for debugging
             if instagram_links:
-                logging.debug(f"Worker {self.worker_id}: Found Instagram links: {instagram_links}")
-                return instagram_links[0]  # Return the first valid one
-            else:
-                # Check if we only found excluded accounts
-                all_instagram_links = []
-                for a in soup.find_all('a', href=True):
-                    href = a['href']
-                    if 'instagram.com' in href.lower():
-                        all_instagram_links.append(href)
+                return instagram_links[0]
                 
-                if all_instagram_links:
-                    logging.debug(f"Worker {self.worker_id}: Only found excluded Instagram links: {all_instagram_links}")
-                
-                return ''
+            return ''
                 
         except Exception as e:
             logging.error(f"Worker {self.worker_id}: Error extracting Instagram: {str(e)}")
             return ''
 
     def process_player_row(self, row) -> Optional[Dict]:
-        """Process a single player row"""
         try:
             name_cell = row.select_one('td.hauptlink a')
             if not name_cell:
@@ -259,7 +218,6 @@ class MatrixTurboScraper:
             name = name_cell.text.strip()
             profile_url = f"https://www.transfermarkt.com{name_cell['href']}"
             
-            # Find market value
             value_cell = None
             for cell in row.select('td'):
                 cell_text = cell.text
@@ -294,7 +252,6 @@ class MatrixTurboScraper:
             return None
 
     def get_players_from_page(self, base_url: str, page: int) -> List[Dict]:
-        """Get players from a single page"""
         url = f"{base_url}?page={page}"
         
         response = self.make_smart_request(url)
@@ -313,11 +270,10 @@ class MatrixTurboScraper:
         return players
 
     def scrape_search_sequential(self, base_url: str, search_index: int) -> int:
-        """Scrape a single search URL sequentially (no threading within worker)"""
         logging.info(f"Worker {self.worker_id}: Scraping search {search_index + 1}")
         
         all_players_from_search = []
-        max_pages = 10  # Limit pages for speed
+        max_pages = 10
         
         for page in range(1, max_pages + 1):
             page_players = self.get_players_from_page(base_url, page)
@@ -325,9 +281,8 @@ class MatrixTurboScraper:
             logging.info(f"Worker {self.worker_id}: Page {page} -> {len(page_players)} players")
             
             if len(page_players) == 0:
-                break  # No more players
+                break
         
-        # Process Instagram for all players
         final_players = []
         for i, player in enumerate(all_players_from_search):
             instagram = self.extract_instagram_fast(player['profile_url'])
@@ -348,7 +303,6 @@ class MatrixTurboScraper:
         return len(final_players)
 
     def save_data_to_files(self):
-        """Save data to both Excel and JSON"""
         if not self.players_data:
             return
             
@@ -356,17 +310,14 @@ class MatrixTurboScraper:
             df = pd.DataFrame(self.players_data)
             df = df.sort_values('Value (M€)', ascending=False)
             
-            # Save Excel
             with pd.ExcelWriter(self.output_filename, engine='openpyxl') as writer:
                 df.to_excel(writer, index=False, sheet_name='Players')
-                
                 worksheet = writer.sheets['Players']
                 worksheet.column_dimensions['A'].width = 30
                 worksheet.column_dimensions['B'].width = 15
                 worksheet.column_dimensions['C'].width = 50
                 worksheet.column_dimensions['D'].width = 50
             
-            # Save JSON for merging
             with open(self.json_output, 'w', encoding='utf-8') as f:
                 json.dump(self.players_data, f, ensure_ascii=False, indent=2)
             
@@ -376,12 +327,6 @@ class MatrixTurboScraper:
             logging.error(f"Worker {self.worker_id}: Error saving data: {str(e)}")
 
     def scrape_matrix_worker(self):
-        """Main scraping method for matrix worker"""
-        # Add staggered startup to avoid all workers hitting at once
-        startup_delay = self.worker_id * 3 + random.uniform(0, 5)
-        logging.info(f"Worker {self.worker_id}: Waiting {startup_delay:.1f}s before starting...")
-        time.sleep(startup_delay)
-        
         logging.info(f"🚀 Worker {self.worker_id}/{self.total_workers} STARTING!")
         logging.info(f"📋 Assigned URLs: {len(self.my_search_urls)}")
         
@@ -403,7 +348,7 @@ class MatrixTurboScraper:
                 self.save_data_to_files()
                 
                 logging.info(f"\n🎉 Worker {self.worker_id} COMPLETE! 🎉")
-                logging.info(f"⏱️  Time: {elapsed_time/60:.1f} minutes")
+                logging.info(f"⏱️ Time: {elapsed_time/60:.1f} minutes")
                 logging.info(f"👥 Players: {len(self.players_data)}")
                 logging.info(f"📸 Instagram: {len([p for p in self.players_data if p['Instagram']])}")
 
