@@ -1,5 +1,5 @@
 # .github/workflows/matrix-scraping.yml
-name: MATRIX TURBO Player Data Scraping (15 IPs + Auto-Retry)
+name: MATRIX TURBO Player Data Scraping (15 IPs)
 on:
   schedule:
     # Run on the 1st of every month at 2 AM UTC
@@ -14,7 +14,7 @@ jobs:
     strategy:
       matrix:
         worker_id: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]  # 15 workers!
-      fail-fast: false  # Don't cancel other workers if one fails
+      fail-fast: true  # Don't cancel other workers if one fails
       max-parallel: 15  # All 15 workers run simultaneously
     
     steps:
@@ -38,29 +38,6 @@ jobs:
         python scraper.py --worker-id ${{ matrix.worker_id }} --total-workers 15
         echo "✅ Worker ${{ matrix.worker_id }} completed its dedicated search"
     
-    - name: Check worker success
-      id: check_success
-      run: |
-        # Check if any JSON file was created and has data
-        JSON_FILE=$(ls transfermarkt_worker_${{ matrix.worker_id }}_*.json 2>/dev/null | head -1)
-        
-        if [ -f "$JSON_FILE" ]; then
-          PLAYER_COUNT=$(python -c "import json; data=json.load(open('$JSON_FILE')); print(len(data))")
-          echo "player_count=$PLAYER_COUNT" >> $GITHUB_OUTPUT
-          
-          if [ "$PLAYER_COUNT" -eq 0 ]; then
-            echo "⚠️ Worker ${{ matrix.worker_id }} found 0 players - FAILED"
-            echo "success=false" >> $GITHUB_OUTPUT
-          else
-            echo "✅ Worker ${{ matrix.worker_id }} found $PLAYER_COUNT players - SUCCESS"
-            echo "success=true" >> $GITHUB_OUTPUT
-          fi
-        else
-          echo "❌ Worker ${{ matrix.worker_id }} produced no output file - FAILED"
-          echo "success=false" >> $GITHUB_OUTPUT
-          echo "player_count=0" >> $GITHUB_OUTPUT
-        fi
-    
     - name: Upload worker results
       uses: actions/upload-artifact@v4
       if: always()
@@ -68,136 +45,15 @@ jobs:
         name: worker-${{ matrix.worker_id }}-results
         path: |
           transfermarkt_worker_${{ matrix.worker_id }}_*.xlsx
-          transfermarkt_worker_${{ matrix.worker_id }}_*.json
           scraper.log
         retention-days: 30
-    
-    - name: Upload failure marker
-      uses: actions/upload-artifact@v4
-      if: steps.check_success.outputs.success == 'false'
-      with:
-        name: failed-worker-${{ matrix.worker_id }}
-        path: |
-          scraper.log
-        retention-days: 7
 
-  # DETECT FAILURES AND TRIGGER RETRIES
-  detect-failures:
+  
+  # MERGE JOB - Combines all 15 worker results from XLSX files
+  merge-results:
     needs: matrix-scrape
     runs-on: ubuntu-latest
     if: always()
-    outputs:
-      failed_workers: ${{ steps.find_failures.outputs.failed_workers }}
-      has_failures: ${{ steps.find_failures.outputs.has_failures }}
-    
-    steps:
-    - name: Download all artifacts
-      uses: actions/download-artifact@v4
-      with:
-        path: all-artifacts/
-    
-    - name: Find failed workers
-      id: find_failures
-      run: |
-        echo "🔍 Checking for failed workers..."
-        
-        # List all failure markers
-        FAILED_WORKERS=""
-        for dir in all-artifacts/failed-worker-*; do
-          if [ -d "$dir" ]; then
-            WORKER_ID=$(echo "$dir" | grep -oP 'failed-worker-\K\d+')
-            echo "❌ Found failed worker: $WORKER_ID"
-            if [ -z "$FAILED_WORKERS" ]; then
-              FAILED_WORKERS="$WORKER_ID"
-            else
-              FAILED_WORKERS="$FAILED_WORKERS,$WORKER_ID"
-            fi
-          fi
-        done
-        
-        if [ -z "$FAILED_WORKERS" ]; then
-          echo "✅ No failures detected!"
-          echo "has_failures=false" >> $GITHUB_OUTPUT
-          echo "failed_workers=[]" >> $GITHUB_OUTPUT
-        else
-          echo "⚠️ Failed workers: $FAILED_WORKERS"
-          echo "has_failures=true" >> $GITHUB_OUTPUT
-          # Convert to JSON array format
-          JSON_ARRAY="[$(echo $FAILED_WORKERS | sed 's/,/,/g')]"
-          echo "failed_workers=$JSON_ARRAY" >> $GITHUB_OUTPUT
-        fi
-
-  # RETRY FAILED WORKERS
-  retry-failed-workers:
-    needs: detect-failures
-    if: needs.detect-failures.outputs.has_failures == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 180
-    strategy:
-      matrix:
-        worker_id: ${{ fromJson(needs.detect-failures.outputs.failed_workers) }}
-      fail-fast: false
-      max-parallel: 15
-    
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-    
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.9'
-    
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install requests pandas beautifulsoup4 openpyxl lxml
-        echo "Dependencies installed for RETRY worker ${{ matrix.worker_id }}"
-    
-    - name: Run RETRY Worker
-      run: |
-        echo "🔄 RETRYING Worker ${{ matrix.worker_id }}/15..."
-        python scraper.py --worker-id ${{ matrix.worker_id }} --total-workers 15
-        echo "✅ RETRY Worker ${{ matrix.worker_id }} completed"
-    
-    - name: Check retry success
-      id: check_retry
-      run: |
-        JSON_FILE=$(ls transfermarkt_worker_${{ matrix.worker_id }}_*.json 2>/dev/null | head -1)
-        
-        if [ -f "$JSON_FILE" ]; then
-          PLAYER_COUNT=$(python -c "import json; data=json.load(open('$JSON_FILE')); print(len(data))")
-          echo "player_count=$PLAYER_COUNT" >> $GITHUB_OUTPUT
-          
-          if [ "$PLAYER_COUNT" -eq 0 ]; then
-            echo "⚠️ RETRY Worker ${{ matrix.worker_id }} still found 0 players"
-            echo "success=false" >> $GITHUB_OUTPUT
-          else
-            echo "✅ RETRY Worker ${{ matrix.worker_id }} found $PLAYER_COUNT players!"
-            echo "success=true" >> $GITHUB_OUTPUT
-          fi
-        else
-          echo "❌ RETRY Worker ${{ matrix.worker_id }} produced no output"
-          echo "success=false" >> $GITHUB_OUTPUT
-          echo "player_count=0" >> $GITHUB_OUTPUT
-        fi
-    
-    - name: Upload retry results
-      uses: actions/upload-artifact@v4
-      if: always()
-      with:
-        name: retry-worker-${{ matrix.worker_id }}-results
-        path: |
-          transfermarkt_worker_${{ matrix.worker_id }}_*.xlsx
-          transfermarkt_worker_${{ matrix.worker_id }}_*.json
-          scraper.log
-        retention-days: 30
-
-  # MERGE JOB - Combines all results including retries
-  merge-results:
-    needs: [matrix-scrape, retry-failed-workers]
-    if: always()
-    runs-on: ubuntu-latest
 
     permissions:
       contents: write
@@ -239,11 +95,16 @@ jobs:
             for col in instagram_columns:
                 if col in df.columns:
                     print(f'🧹 Cleaning Instagram column: {col}')
+                    # Count original entries
                     original_count = df[col].notna().sum()
                     
+                    # Replace the specific transfermarkt URL with empty string
                     df[col] = df[col].replace('https://www.instagram.com/transfermarkt_official/', '', regex=False)
+                    
+                    # Also clean up any empty strings to NaN for consistency
                     df[col] = df[col].replace('', pd.NA)
                     
+                    # Count after cleaning
                     cleaned_count = df[col].notna().sum()
                     removed_count = original_count - cleaned_count
                     
@@ -254,11 +115,10 @@ jobs:
             return df
 
         def merge_xlsx_files():
-            print('📄 Merging worker XLSX results (including retries)...')
+            print('🔄 Merging 15 worker XLSX results...')
             
-            # Find all XLSX files from workers AND retries
+            # Find all XLSX files from workers
             xlsx_files = glob('worker-results/worker-*-results/transfermarkt_worker_*.xlsx')
-            xlsx_files += glob('worker-results/retry-worker-*-results/transfermarkt_worker_*.xlsx')
             
             if not xlsx_files:
                 print('❌ No XLSX result files found to merge.')
@@ -267,33 +127,16 @@ jobs:
             print(f'Found {len(xlsx_files)} XLSX files to merge')
             
             all_data = []
-            workers_with_data = []
-            workers_without_data = []
             
             for xlsx_file in xlsx_files:
                 print(f'Processing: {xlsx_file}')
                 try:
                     df = pd.read_excel(xlsx_file)
-                    if len(df) > 0:
-                        all_data.append(df)
-                        workers_with_data.append(xlsx_file)
-                        print(f'✅ Added {len(df)} players from {xlsx_file}')
-                    else:
-                        workers_without_data.append(xlsx_file)
-                        print(f'⚠️ Skipped {xlsx_file} (0 players)')
+                    all_data.append(df)
+                    print(f'Added {len(df)} players from {xlsx_file}')
                 except Exception as e:
-                    print(f'❌ Error reading {xlsx_file}: {e}')
-                    workers_without_data.append(xlsx_file)
+                    print(f'Error reading {xlsx_file}: {e}')
                     continue
-            
-            print(f'\n📊 Summary:')
-            print(f'   Workers with data: {len(workers_with_data)}')
-            print(f'   Workers without data: {len(workers_without_data)}')
-            
-            if workers_without_data:
-                print(f'\n⚠️ Failed workers:')
-                for worker in workers_without_data:
-                    print(f'   - {worker}')
             
             if not all_data:
                 print('❌ No valid data found in XLSX files.')
@@ -301,14 +144,16 @@ jobs:
             
             # Combine all dataframes
             combined_df = pd.concat(all_data, ignore_index=True)
-            print(f'\n📦 Combined total: {len(combined_df)} players')
+            print(f'Combined total: {len(combined_df)} players')
             
             # Clean Instagram URLs BEFORE deduplication
             combined_df = clean_instagram_urls(combined_df)
             
+            # Remove duplicates based on Transfermarkt URL (assuming it's a column)
+            # Check what columns are available
             print(f'Available columns: {list(combined_df.columns)}')
             
-            # Remove duplicates
+            # Remove duplicates - adjust column name based on your actual data
             if 'Transfermarkt' in combined_df.columns:
                 unique_df = combined_df.drop_duplicates(subset=['Transfermarkt'])
                 print(f'After removing duplicates by Transfermarkt URL: {len(unique_df)} players')
@@ -316,6 +161,7 @@ jobs:
                 unique_df = combined_df.drop_duplicates(subset=['transfermarkt_url'])
                 print(f'After removing duplicates by transfermarkt_url: {len(unique_df)} players')
             else:
+                # Fallback: remove duplicates by name if Transfermarkt column not found
                 if 'Name' in combined_df.columns:
                     unique_df = combined_df.drop_duplicates(subset=['Name'])
                     print(f'After removing duplicates by Name: {len(unique_df)} players')
@@ -334,6 +180,7 @@ jobs:
             with pd.ExcelWriter(output_filename, engine='openpyxl') as writer:
                 unique_df.to_excel(writer, index=False, sheet_name='Players')
                 worksheet = writer.sheets['Players']
+                # Auto-adjust column widths
                 for col in worksheet.columns:
                     max_length = 0
                     column = col[0].column_letter
@@ -348,17 +195,17 @@ jobs:
             
             total_players = len(unique_df)
             
-            # Count Instagram links
+            # Count Instagram links if column exists (after cleaning)
             instagram_count = 0
             if 'Instagram' in unique_df.columns:
                 instagram_count = unique_df['Instagram'].notna().sum()
             elif 'instagram' in unique_df.columns:
                 instagram_count = unique_df['instagram'].notna().sum()
             
-            print(f'\n✅ Merged file created: {output_filename}')
+            print(f'✅ Merged file created: {output_filename}')
             print(f'👥 Total unique players: {total_players}')
             print(f'📸 With Instagram (after cleaning): {instagram_count}')
-            print(f'🌐 Data collected from multiple IPs with auto-retry')
+            print(f'🌐 Data collected from 15 different IPs')
             print(f'🧹 Transfermarkt Instagram URLs removed')
             
             return True, total_players, instagram_count
@@ -366,6 +213,7 @@ jobs:
         if __name__ == "__main__":
             success, player_count, instagram_count = merge_xlsx_files()
             
+            # Write outputs for GitHub Actions
             with open('merge_results.txt', 'w') as f:
                 f.write(f"MERGE_SUCCESS={str(success).lower()}\n")
                 f.write(f"PLAYER_COUNT={player_count}\n")
@@ -380,6 +228,7 @@ jobs:
       run: |
         python merge_xlsx.py
         
+        # Read the results
         if [ -f merge_results.txt ]; then
           while IFS= read -r line; do
             echo "$line" >> $GITHUB_OUTPUT
@@ -403,28 +252,29 @@ jobs:
         else
           PLAYER_COUNT="${{ steps.merge_step.outputs.PLAYER_COUNT }}"
           INSTAGRAM_COUNT="${{ steps.merge_step.outputs.INSTAGRAM_COUNT }}"
-          COMMIT_MSG="🚀 MATRIX Update with Auto-Retry: ${PLAYER_COUNT} players (${INSTAGRAM_COUNT} with Instagram) - $(date +'%Y-%m-%d %H:%M UTC')"
+          COMMIT_MSG="🚀 15-IP MATRIX Update: ${PLAYER_COUNT} players (${INSTAGRAM_COUNT} with Instagram) - $(date +'%Y-%m-%d %H:%M UTC')"
 
           git commit -m "$COMMIT_MSG"
           git push --force origin main
-          echo "✅ Matrix results with retries pushed successfully."
+          echo "✅ Matrix results from 15 IPs pushed successfully."
         fi
 
     - name: Upload final merged results
       uses: actions/upload-artifact@v4
       if: always() && steps.merge_step.outputs.MERGE_SUCCESS == 'true'
       with:
-        name: final-merged-results-with-retries
+        name: final-merged-results-15-workers
         path: jose_new.xlsx
         retention-days: 90
 
     - name: Matrix Summary
       if: always()
       run: |
-        echo "## 🎉 MATRIX SCRAPING WITH AUTO-RETRY COMPLETE!" >> $GITHUB_STEP_SUMMARY
+        echo "## 🎉 15-IP MATRIX SCRAPING COMPLETE!" >> $GITHUB_STEP_SUMMARY
         if [ "${{ steps.merge_step.outputs.MERGE_SUCCESS }}" == "true" ]; then
-          echo "- **Status:** ✅ Successful Merge & Push (with auto-retry)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Strategy:** 15 workers + automatic retry for failed workers" >> $GITHUB_STEP_SUMMARY
+          echo "- **Status:** ✅ Successful 15-Worker Merge & Push" >> $GITHUB_STEP_SUMMARY
+          echo "- **IPs used:** 15 different GitHub runner IPs" >> $GITHUB_STEP_SUMMARY
+          echo "- **Efficiency:** 1 search URL per IP (perfect distribution)" >> $GITHUB_STEP_SUMMARY
           echo "- **Final file:** jose_new.xlsx" >> $GITHUB_STEP_SUMMARY
           echo "- **Total players:** ${{ steps.merge_step.outputs.PLAYER_COUNT }}" >> $GITHUB_STEP_SUMMARY
           echo "- **With Instagram:** ${{ steps.merge_step.outputs.INSTAGRAM_COUNT }}" >> $GITHUB_STEP_SUMMARY
