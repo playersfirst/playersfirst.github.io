@@ -36,21 +36,21 @@ class MatrixTurboScraper:
         
         # ALL search URLs - will be distributed among workers
         self.all_search_urls = [
-            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526065",  # U28 players 200-30M
-            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526071",  # U28 players 30-20M
-            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526075",  # U28 players 20-15M
-            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526078",  # U28 players 15-12M
-            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526082",  # U28 players 12-10M
-            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526083",  # U28 players 10-8M
-            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526088",  # U28 players 8-7M
-            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526095",  # U28 players 7-6M
-            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526097",  # U28 players 6-5M
-            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526115",  # U24 players 5-4M
-            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526122",  # U24 players 4-3.5M
-            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526126",  # U24 players 3.5-3M
-            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526128",  # U24 players 3-2.5M
-            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526130",  # U24 players 2.5-2.2M
-            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58526131",  # U24 players 2.2M
+            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58947287",  # U28 players 200-30M
+            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58947295",  # U28 players 30-20M
+            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58947298",  # U28 players 20-15M
+            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58947301",  # U28 players 15-12M
+            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58947303",  # U28 players 12-10M
+            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58947306",  # U28 players 10-8M
+            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58947311",  # U28 players 8-7M
+            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58947325",  # U28 players 7-6M
+            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58947331",  # U28 players 6-5M
+            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58947338",  # U24 players 5-4M
+            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58947342",  # U24 players 4-3.5M
+            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58947346",  # U24 players 3.5-3M
+            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58947351",  # U24 players 3-2.5M
+            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58947354",  # U24 players 2.5-2.2M
+            "https://www.transfermarkt.com/detailsuche/spielerdetail/suche/58947358",  # U24 players 2.2M
         ]
         
         # Distribute URLs among workers
